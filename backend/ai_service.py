@@ -417,7 +417,7 @@ def _settings_candidate(payload: Dict[str, Any], current: Optional[Dict[str, Any
         "org_name": str(payload.get("org_name") if "org_name" in payload else current.get("org_name", "")).strip()[:80],
         "report_title": str(payload.get("report_title") if "report_title" in payload else current.get("report_title", "")).strip()[:120],
         "model_deep": str(payload.get("model_deep") if "model_deep" in payload else current.get("model_deep", "")).strip()[:120],
-        "daily_budget_usd": max(0.0, float(payload.get("daily_budget_usd") or current.get("daily_budget_usd") or 0)),
+        "daily_budget_usd": max(0.0, float(payload.get("daily_budget_usd") if "daily_budget_usd" in payload else (current.get("daily_budget_usd") or 0))),
     }
     incoming_key = str(payload.get("api_key") or "").strip()
     if incoming_key and incoming_key != MASK:
