@@ -2956,7 +2956,11 @@
 
             'ai-org-name': s.org_name || '',
 
-            'ai-report-title': s.report_title || ''
+            'ai-report-title': s.report_title || '',
+
+            'ai-model-deep': s.model_deep || '',
+
+            'ai-daily-budget': s.daily_budget_usd || 0
 
         };
 
@@ -3076,7 +3080,11 @@
 
             org_name: document.getElementById('ai-org-name')?.value?.trim() || '',
 
-            report_title: document.getElementById('ai-report-title')?.value?.trim() || ''
+            report_title: document.getElementById('ai-report-title')?.value?.trim() || '',
+
+            model_deep: document.getElementById('ai-model-deep')?.value?.trim() || '',
+
+            daily_budget_usd: Number(document.getElementById('ai-daily-budget')?.value || 0)
 
         };
 
@@ -3168,6 +3176,10 @@
                 <label>Tên doanh nghiệp (tùy chọn)<input type="text" id="ai-org-name" maxlength="80" placeholder="VD: LPBS — hiển thị trong báo cáo"></label>
 
                 <label>Tiêu đề báo cáo tùy chỉnh (tùy chọn)<input type="text" id="ai-report-title" maxlength="120" placeholder="VD: MANTIS // LPBS // Báo cáo Tình báo Mối đe dọa"></label>
+
+                <label>Mô hình phân tích sâu (tùy chọn)<input type="text" id="ai-model-deep" maxlength="120" placeholder="Để trống = dùng mô hình mặc định — VD: gpt-4o cho báo cáo chuyên sâu"></label>
+
+                <label>Ngân sách AI hàng ngày (USD, 0 = không giới hạn)<input type="number" id="ai-daily-budget" min="0" max="1000" step="0.01" placeholder="0"></label>
 
             </div>
 

@@ -22,6 +22,7 @@ import feedparser
 import requests
 
 import ai_service
+import ai_schemas
 import cti_db
 
 
@@ -1399,6 +1400,20 @@ def _cve_set(items: List[Dict[str, Any]], *fields: str) -> set:
     return out
 
 
+def _priority_label(is_kev: bool, epss: Any) -> str:
+    """Tính nhãn ưu tiên P1-P5 theo chuẩn EPSS/KEV."""
+    v = float(epss) if epss is not None else 0.0
+    if is_kev and v >= 0.7:
+        return "P1"
+    if is_kev:
+        return "P2"
+    if v >= 0.5:
+        return "P3"
+    if v >= 0.1:
+        return "P4"
+    return "P5"
+
+
 def priority_cves(kev: Dict[str, Any], pocs: Dict[str, Any], lanes: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
     by_cve: Dict[str, Dict[str, Any]] = {}
 
@@ -1416,6 +1431,7 @@ def priority_cves(kev: Dict[str, Any], pocs: Dict[str, Any], lanes: Dict[str, An
             "epss": None,
             "sources": [],
             "recommended_action": "Monitor",
+            "priority_label": "P5",
             "score": 0,
         })
 
@@ -1476,6 +1492,7 @@ def priority_cves(kev: Dict[str, Any], pocs: Dict[str, Any], lanes: Dict[str, An
             item["recommended_action"] = "Assess exposure"
         else:
             item["recommended_action"] = "Monitor advisory"
+        item["priority_label"] = _priority_label("KEV" in sources, item.get("epss"))
         out.append(item)
     out.sort(key=lambda x: (x.get("score") or 0, x.get("epss") or 0), reverse=True)
     return out[:limit]
@@ -1850,18 +1867,13 @@ def ai_brief(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     ]
     started = time.monotonic()
     run_settings = _token_floor_settings(settings, 3000)
-    content = ai_service.AIProvider(run_settings).generate(messages)
     try:
-        data, _recovered = _try_recover_json(content or "{}")
-    except ValueError as exc:
-        cur_limit = settings.get("max_output_tokens", 2200)
-        ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_brief", None, False, "malformed_response", str(exc))
-        raise ai_service.AIProviderError(
-            f"AI trả về JSON Tóm tắt Tình báo hôm nay bị lỗi. "
-            f"Phản hồi AI có thể bị cắt trước khi JSON kết thúc, do đạt giới hạn token đầu ra (hiện tại {cur_limit}), "
-            f"hoặc do mô hình dùng token cho lý luận ẩn. "
-            f"Hãy tăng 'Tối đa token đầu ra' trong cài đặt AI (tối đa 8000) hoặc dùng mô hình không có lý luận, rồi thử lại."
-        ) from exc
+        content = ai_service.LLMGateway(run_settings, tier="deep").generate(messages, purpose="intel_brief")
+    except ai_service.BudgetExceededError as exc:
+        ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_brief", None, False, "budget_exceeded", str(exc))
+        raise ai_service.AIProviderError(str(exc)) from exc
+
+    brief_obj, _recovered = ai_schemas.validate_schema(content or "{}", ai_schemas.TodaysIntelBrief)
 
     def strings(value: Any, limit: int = 10) -> List[str]:
         if isinstance(value, str):
@@ -1873,11 +1885,11 @@ def ai_brief(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     result = {
         "available": True,
         "model": settings.get("model"),
-        "executive_summary": str(data.get("executive_summary") or data.get("summary") or "").strip()[:1600],
-        "priority_items": strings(data.get("priority_items")),
-        "watchlist": strings(data.get("watchlist")),
-        "recommended_actions": strings(data.get("recommended_actions")),
-        "caveats": strings(data.get("caveats"), limit=6),
+        "executive_summary": str(brief_obj.executive_summary or "").strip()[:1600],
+        "priority_items": strings(brief_obj.priority_items),
+        "watchlist": strings(brief_obj.watchlist),
+        "recommended_actions": strings(brief_obj.recommended_actions),
+        "caveats": strings(brief_obj.caveats, limit=6),
     }
     ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_brief", None, False, "ok", f"{time.monotonic() - started:.2f}s")
     return result
@@ -1950,18 +1962,13 @@ def ai_report(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     ]
     started = time.monotonic()
     run_settings = _token_floor_settings(settings, 4500)
-    content = ai_service.AIProvider(run_settings).generate(messages)
     try:
-        data, _recovered = _try_recover_json(content or "{}")
-    except ValueError as exc:
-        cur_limit = settings.get("max_output_tokens", 2200)
-        ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_report", None, False, "malformed_response", str(exc))
-        raise ai_service.AIProviderError(
-            f"AI trả về JSON báo cáo Tình báo hôm nay bị lỗi. "
-            f"Phản hồi AI có thể bị cắt trước khi JSON kết thúc, do đạt giới hạn token đầu ra (hiện tại {cur_limit}), "
-            f"hoặc do mô hình dùng token cho lý luận ẩn. "
-            f"Hãy tăng 'Tối đa token đầu ra' trong cài đặt AI (tối đa 8000) hoặc dùng mô hình không có lý luận, rồi thử lại."
-        ) from exc
+        content = ai_service.LLMGateway(run_settings, tier="deep").generate(messages, purpose="intel_report")
+    except ai_service.BudgetExceededError as exc:
+        ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_report", None, False, "budget_exceeded", str(exc))
+        raise ai_service.AIProviderError(str(exc)) from exc
+
+    report_obj, _recovered = ai_schemas.validate_schema(content or "{}", ai_schemas.TodaysIntelReport)
 
     def flatten(value: Any) -> str:
         if value is None:
@@ -1991,19 +1998,19 @@ def ai_report(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     result = {
         "available": True,
         "model": settings.get("model"),
-        "title": text(data.get("title") or f"Current Intelligence Assessment - {range_label}", 180),
-        "scope": text(data.get("scope") or f"Scope: {range_label} intelligence from configured MANTIS sources.", 500),
-        "executive_assessment": text(data.get("executive_assessment") or data.get("executive_summary")),
-        "key_judgments": strings(data.get("key_judgments"), limit=8),
-        "threat_landscape": text(data.get("threat_landscape")),
-        "vulnerability_and_exploit_assessment": text(data.get("vulnerability_and_exploit_assessment")),
-        "ransomware_assessment": text(data.get("ransomware_assessment")),
-        "actor_and_malware_assessment": text(data.get("actor_and_malware_assessment")),
-        "regional_or_sector_relevance": text(data.get("regional_or_sector_relevance")),
-        "priority_developments": strings(data.get("priority_developments"), limit=10),
-        "recommended_actions": strings(data.get("recommended_actions"), limit=10),
-        "collection_gaps": strings(data.get("collection_gaps") or data.get("caveats"), limit=8),
-        "confidence": text(data.get("confidence") or "Confidence not stated", 220),
+        "title": text(report_obj.title or f"Đánh giá Tình báo Hiện tại - {range_label}", 180),
+        "scope": text(report_obj.scope or f"Phạm vi: thông tin tình báo {range_label} từ các nguồn Metis đã cấu hình.", 500),
+        "executive_assessment": text(report_obj.executive_assessment),
+        "key_judgments": strings(report_obj.key_judgments, limit=8),
+        "threat_landscape": text(report_obj.threat_landscape),
+        "vulnerability_and_exploit_assessment": text(report_obj.vulnerability_and_exploit_assessment),
+        "ransomware_assessment": text(report_obj.ransomware_assessment),
+        "actor_and_malware_assessment": text(report_obj.actor_and_malware_assessment),
+        "regional_or_sector_relevance": text(report_obj.regional_or_sector_relevance),
+        "priority_developments": strings(report_obj.priority_developments, limit=10),
+        "recommended_actions": strings(report_obj.recommended_actions, limit=10),
+        "collection_gaps": strings(report_obj.collection_gaps, limit=8),
+        "confidence": text(report_obj.confidence or "Mức độ tin cậy chưa xác định", 220),
     }
     ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_report", None, False, "ok", f"{time.monotonic() - started:.2f}s")
     return result

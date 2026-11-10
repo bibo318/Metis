@@ -48,6 +48,8 @@ DEFAULT_SETTINGS = {
     "max_output_tokens": 2200,
     "org_name": "",
     "report_title": "",
+    "model_deep": "",
+    "daily_budget_usd": 0.0,
 }
 
 AI_PROVIDER_PRESETS = {
@@ -272,6 +274,10 @@ class AIProviderError(Exception):
     pass
 
 
+class BudgetExceededError(Exception):
+    pass
+
+
 def _connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(AI_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(AI_DB_PATH)
@@ -299,6 +305,17 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    # Migration: thêm cột cost/token nếu chưa có
+    for _col_def in [
+        "input_tokens INTEGER",
+        "output_tokens INTEGER",
+        "cost_usd REAL",
+        "tier TEXT",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE ai_audit ADD COLUMN {_col_def}")
+        except sqlite3.OperationalError:
+            pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS ai_intel_memory (
@@ -331,6 +348,11 @@ def _settings_raw() -> Dict[str, Any]:
                         settings[key] = int(row["value"])
                     except (TypeError, ValueError):
                         settings[key] = DEFAULT_SETTINGS[key]
+                elif key == "daily_budget_usd":
+                    try:
+                        settings[key] = float(row["value"])
+                    except (TypeError, ValueError):
+                        settings[key] = 0.0
                 else:
                     settings[key] = row["value"]
     finally:
@@ -394,6 +416,8 @@ def _settings_candidate(payload: Dict[str, Any], current: Optional[Dict[str, Any
         "max_output_tokens": max(128, min(int(payload.get("max_output_tokens") or current["max_output_tokens"]), 8000)),
         "org_name": str(payload.get("org_name") if "org_name" in payload else current.get("org_name", "")).strip()[:80],
         "report_title": str(payload.get("report_title") if "report_title" in payload else current.get("report_title", "")).strip()[:120],
+        "model_deep": str(payload.get("model_deep") if "model_deep" in payload else current.get("model_deep", "")).strip()[:120],
+        "daily_budget_usd": max(0.0, float(payload.get("daily_budget_usd") or current.get("daily_budget_usd") or 0)),
     }
     incoming_key = str(payload.get("api_key") or "").strip()
     if incoming_key and incoming_key != MASK:
@@ -425,12 +449,19 @@ def save_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
     return get_settings(mask=True)
 
 
-def log_audit(model: str, page: str, operation: str, proposed_tool: str, approved: bool, status: str, detail: str = "") -> None:
+def log_audit(
+    model: str, page: str, operation: str, proposed_tool: str, approved: bool, status: str,
+    detail: str = "",
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    cost_usd: Optional[float] = None,
+    tier: Optional[str] = None,
+) -> None:
     safe_detail = redact_secrets(detail or "")[:1000]
     conn = _connect()
     try:
         conn.execute(
-            "INSERT INTO ai_audit(ts, model, page, operation, proposed_tool, approved, status, detail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ai_audit(ts, model, page, operation, proposed_tool, approved, status, detail, input_tokens, output_tokens, cost_usd, tier) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 datetime.now(timezone.utc).isoformat(),
                 model or "",
@@ -440,6 +471,10 @@ def log_audit(model: str, page: str, operation: str, proposed_tool: str, approve
                 1 if approved else 0,
                 status or "",
                 safe_detail,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                tier or "",
             ),
         )
         conn.commit()
@@ -466,7 +501,7 @@ def audit_recent(limit: int = 100) -> Dict[str, Any]:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT ts, model, page, operation, proposed_tool, approved, status, detail FROM ai_audit ORDER BY id DESC LIMIT ?",
+            "SELECT ts, model, page, operation, proposed_tool, approved, status, detail, input_tokens, output_tokens, cost_usd, tier FROM ai_audit ORDER BY id DESC LIMIT ?",
             (max(1, min(int(limit or 100), 500)),),
         ).fetchall()
         return {"items": [dict(row) for row in rows]}
@@ -3821,3 +3856,95 @@ def mark_correlation_evidence(payload: Dict[str, Any]) -> Dict[str, Any]:
         CORRELATION_OVERRIDES[correlation_id].pop(evidence_id, None)
     log_audit(_settings_raw().get("model"), "", "correlation_mark", None, True, mark or "cleared", json.dumps({"correlation_id": correlation_id, "evidence_id": evidence_id, "note": note})[:1000])
     return {"correlation_id": correlation_id, "evidence_id": evidence_id, "mark": mark, "note": note}
+
+
+# --- LLM Gateway ---
+
+_COST_TABLE = [
+    # (pattern, input_per_1k, output_per_1k)
+    ("gpt-4o-mini", 0.00015, 0.0006),
+    ("gpt-4o", 0.0025, 0.01),
+    ("gpt-4-turbo", 0.01, 0.03),
+    ("gpt-4", 0.03, 0.06),
+    ("claude-3-5-haiku", 0.0008, 0.004),
+    ("claude-haiku", 0.00025, 0.00125),
+    ("claude-3-5-sonnet", 0.003, 0.015),
+    ("claude-sonnet", 0.003, 0.015),
+    ("claude-opus", 0.015, 0.075),
+    ("claude-3-opus", 0.015, 0.075),
+    ("llama-3", 0.0002, 0.0002),
+    ("gemini-flash", 0.00015, 0.0006),
+    ("gemini-pro", 0.00125, 0.005),
+]
+
+
+def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Ước tính chi phí API theo model và token count."""
+    m = (model or "").lower()
+    for pattern, in_rate, out_rate in _COST_TABLE:
+        if pattern in m:
+            return (input_tokens / 1000.0) * in_rate + (output_tokens / 1000.0) * out_rate
+    # Fallback chung
+    return (input_tokens / 1000.0) * 0.001 + (output_tokens / 1000.0) * 0.003
+
+
+def _today_cost_usd() -> float:
+    """Tổng chi phí AI đã dùng trong ngày hôm nay (UTC)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT SUM(cost_usd) FROM ai_audit WHERE ts >= ? AND cost_usd IS NOT NULL",
+            (today,),
+        ).fetchone()
+        return float(row[0] or 0.0)
+    finally:
+        conn.close()
+
+
+class LLMGateway:
+    """LLM Gateway tập trung: kiểm soát ngân sách, audit log với cost/token."""
+
+    def __init__(self, settings: Dict[str, Any], tier: str = "fast"):
+        self.settings = dict(settings)
+        self.tier = tier
+        # Nếu tier="deep" và model_deep được cấu hình, dùng model đó
+        if tier == "deep":
+            deep_model = str(settings.get("model_deep") or "").strip()
+            if deep_model:
+                self.settings["model"] = deep_model
+
+    def generate(self, messages: List[Dict[str, str]], purpose: str = "") -> str:
+        """Gọi AI với kiểm tra ngân sách trước và ghi audit log sau."""
+        budget = float(self.settings.get("daily_budget_usd") or 0.0)
+        if budget > 0:
+            spent = _today_cost_usd()
+            if spent >= budget:
+                raise BudgetExceededError(
+                    f"Vượt ngân sách AI hàng ngày: đã dùng ${spent:.4f} / giới hạn ${budget:.2f}. "
+                    f"Tăng 'Ngân sách hàng ngày' trong cài đặt AI hoặc chờ đến ngày mai."
+                )
+
+        content = AIProvider(self.settings).generate(messages)
+
+        # Ước tính token từ độ dài content (xấp xỉ 4 ký tự/token)
+        total_chars = sum(len(str(m.get("content") or "")) for m in messages)
+        in_tokens = max(1, total_chars // 4)
+        out_tokens = max(1, len(content or "") // 4)
+        cost = _estimate_cost(self.settings.get("model", ""), in_tokens, out_tokens)
+
+        log_audit(
+            self.settings.get("model"),
+            "llm_gateway",
+            purpose or "generate",
+            None,
+            False,
+            "ok",
+            "",
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            cost_usd=cost,
+            tier=self.tier,
+        )
+
+        return content

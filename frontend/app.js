@@ -10880,6 +10880,10 @@ const KEY_STORE = {
 
 
 
+                priority_label: opts.priority_label || '',
+
+
+
             });
 
 
@@ -10897,6 +10901,10 @@ const KEY_STORE = {
 
 
             meta: [row.vendor, row.product, row.known_ransomware ? `Ransomware: ${row.known_ransomware}` : '', row.poc_count ? `${row.poc_count} PoC` : ''].filter(Boolean).join(' - '),
+
+
+
+            priority_label: row.priority_label || '',
 
 
 
@@ -11044,11 +11052,15 @@ const KEY_STORE = {
 
 
 
+            const priorityBadge = row.priority_label
+                ? `<span class="priority-badge priority-${row.priority_label.toLowerCase()}">${escapeHtml(row.priority_label)}</span>`
+                : '';
+
             const body = `
 
 
 
-                    <div class="todays-row-head"><strong>${escapeHtml(row.cve || row.title || 'Vulnerability')}</strong><b>${escapeHtml(row.source || '')}</b></div>
+                    <div class="todays-row-head">${priorityBadge}<strong>${escapeHtml(row.cve || row.title || 'Vulnerability')}</strong><b>${escapeHtml(row.source || '')}</b></div>
 
 
 

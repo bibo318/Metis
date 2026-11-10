@@ -2544,6 +2544,22 @@ button.todays-row {
 .todays-vuln-row {
     border-left: 3px solid rgba(255,204,0,0.55);
 }
+.priority-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.7em;
+    font-weight: 800;
+    color: #fff;
+    margin-right: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.03em;
+}
+.priority-p1 { background: #dc2626; }
+.priority-p2 { background: #ea580c; }
+.priority-p3 { background: #ca8a04; }
+.priority-p4 { background: #2563eb; }
+.priority-p5 { background: #6b7280; }
 .todays-row .todays-score {
     color: var(--accent);
     display: inline-flex;
