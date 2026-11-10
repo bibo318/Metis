@@ -430,6 +430,46 @@ Settings centralizes operational configuration. **API Keys** manages provider cr
 
 <img width="1920" height="945" alt="image" src="https://github.com/user-attachments/assets/b5c1d752-0ec9-46af-8755-eaac33befc2b" />
 
+## Nâng Cấp Gần Đây (Metis-specific Enhancements)
+
+Metis bổ sung các tính năng sau so với bản MANTIS gốc:
+
+### LLM Gateway Tập Trung
+
+Mọi lời gọi AI trong "Hàng đợi thông tin hôm nay" đều đi qua `LLMGateway` (`backend/ai_service.py`):
+
+- **Ngân sách AI hàng ngày**: Đặt `daily_budget_usd` trong Settings → Metis AI. Hệ thống tự từ chối khi vượt ngưỡng và hiển thị thông báo tiếng Việt.
+- **Mô hình phân tích sâu**: Đặt `model_deep` để dùng model khác (ví dụ `gpt-4o`) cho AI Brief và AI Report — model thông thường vẫn dùng cho chat/summary.
+- **Audit log chi tiết**: Mỗi lần gọi AI ghi thêm `input_tokens`, `output_tokens`, `cost_usd`, và `tier` vào bảng `ai_audit`.
+- **Hỗ trợ CLI adapter**: `claude_code`, `antigravity`, `copilot`, `opencode` hoạt động đúng mà không cần API key hoặc endpoint.
+
+Cài đặt trong UI: **Settings → Metis AI → Mô hình phân tích sâu** và **Ngân sách AI hàng ngày (USD)**.
+
+### Pydantic Structured Output
+
+AI Brief và AI Report dùng schema Pydantic (`backend/ai_schemas.py`) để validate response:
+
+- Không crash khi JSON bị truncate hoặc thiếu field — dùng giá trị mặc định cho field thiếu.
+- `TodaysIntelBrief`: `executive_summary`, `priority_items`, `watchlist`, `recommended_actions`, `caveats`.
+- `TodaysIntelReport`: `title`, `executive_assessment`, `key_judgments`, `threat_landscape`, `vulnerability_and_exploit_assessment`, `ransomware_assessment`, `actor_and_malware_assessment`, `priority_developments`, `recommended_actions`, `confidence`.
+- Tương thích Pydantic v1 và v2.
+
+### EPSS Priority Labels P1–P5
+
+CVE trong "Hàng đợi ưu tiên lỗ hổng" (Today's Intelligence) hiển thị badge màu:
+
+| Nhãn | Điều kiện | Màu |
+|------|-----------|-----|
+| **P1** | KEV + EPSS ≥ 0.7 | Đỏ |
+| **P2** | KEV (mọi EPSS) | Cam |
+| **P3** | EPSS ≥ 0.5 (không KEV) | Vàng |
+| **P4** | EPSS ≥ 0.1 (không KEV) | Xanh dương |
+| **P5** | Còn lại | Xám |
+
+### Tiếng Việt Toàn Bộ
+
+Giao diện người dùng, thông báo lỗi, báo cáo AI Brief/Report, và cảnh báo hệ thống đều bằng tiếng Việt.
+
 
 ## Backend Modules
 

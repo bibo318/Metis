@@ -591,7 +591,7 @@ def github_advisories(github_key: str = "", limit: int = 12, severity: str = "",
     headers = {
         **HTTP_HEADERS,
         "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2026-03-10",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
     if github_key:
         headers["Authorization"] = f"Bearer {github_key.strip()}"
@@ -1831,9 +1831,9 @@ def _source_coverage(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def ai_brief(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     settings = ai_service._settings_raw()
-    if not (settings.get("api_key") and settings.get("endpoint") and settings.get("model")):
+    if not ai_service._settings_available(settings):
         ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_brief", None, False, "missing_config", "")
-        raise ai_service.AIUnavailable("MANTIS AI is missing endpoint, model, or API key configuration.")
+        raise ai_service.AIUnavailable("Metis AI chưa được cấu hình — vui lòng kiểm tra cài đặt model, endpoint và API key.")
     compact = {
         "date": snapshot.get("date"),
         "stats": snapshot.get("stats"),
@@ -1897,9 +1897,9 @@ def ai_brief(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 def ai_report(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     settings = ai_service._settings_raw()
-    if not (settings.get("api_key") and settings.get("endpoint") and settings.get("model")):
+    if not ai_service._settings_available(settings):
         ai_service.log_audit(settings.get("model"), "todays_intelligence", "todays_intel_report", None, False, "missing_config", "")
-        raise ai_service.AIUnavailable("MANTIS AI is missing endpoint, model, or API key configuration.")
+        raise ai_service.AIUnavailable("Metis AI chưa được cấu hình — vui lòng kiểm tra cài đặt model, endpoint và API key.")
 
     compact = {
         "date": snapshot.get("date"),
