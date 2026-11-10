@@ -3536,13 +3536,13 @@
 
             if (caseWorkspaceExport) {
 
-                if (!state.caseId) toast('Sync a case first.', 'error');
+                if (!state.caseId) notify('Sync a case first.');
 
                 else {
 
                     window.open(`${API_BASE}/api/ai/case/${encodeURIComponent(state.caseId)}/export-workspace`, '_blank');
 
-                    toast('Metis AI workspace export started.', 'success');
+                    notify('Metis AI workspace export started.');
 
                 }
 
@@ -3751,7 +3751,7 @@
 
             }
 
-            input?.focus();
+            document.getElementById('ioc-input')?.focus();
 
             return;
 
