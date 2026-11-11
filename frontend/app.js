@@ -11052,8 +11052,9 @@ const KEY_STORE = {
 
 
 
+            const safeLabel = escapeHtml(row.priority_label.toLowerCase());
             const priorityBadge = row.priority_label
-                ? `<span class="priority-badge priority-${row.priority_label.toLowerCase()}">${escapeHtml(row.priority_label)}</span>`
+                ? `<span class="priority-badge priority-${safeLabel}">${escapeHtml(row.priority_label)}</span>`
                 : '';
 
             const body = `
@@ -14484,7 +14485,7 @@ const KEY_STORE = {
 
 
 
-        const deletePosts = confirm(`Also delete locally stored posts for @${account.username}?\n\nChoose Cancel to preserve historical posts.`);
+        const deletePosts = confirm(`Xóa cả các bài đăng đã lưu cục bộ của @${account.username}?\n\nChọn Hủy để giữ lại lịch sử bài đăng.`);
 
 
 
@@ -39155,7 +39156,7 @@ const renderVtExtendedInfo = (data) => {
 
 
 
-                window.mantisAI.syncCase(`Provider AI ${operation} saved.`).catch(err => console.debug('MANTIS AI case sync skipped:', err));
+                window.mantisAI.syncCase(`Provider AI ${operation} saved.`).catch(err => console.debug('Metis AI case sync skipped:', err));
 
 
 
@@ -56142,7 +56143,7 @@ if (data.misp) {
 
 
 
-                            window.mantisAI.syncCase('lookup result updated').catch(err => console.debug('MANTIS AI case sync skipped:', err));
+                            window.mantisAI.syncCase('lookup result updated').catch(err => console.debug('Metis AI case sync skipped:', err));
 
 
 
@@ -66614,7 +66615,7 @@ if (data.misp) {
 
 
 
-        if (!confirm(`Are you sure you want to delete category "${catName}"? Sources under this category will be reset.`)) return;
+        if (!confirm(`Bạn có chắc chắn muốn xóa danh mục "${catName}"? Các nguồn trong danh mục này sẽ bị reset.`)) return;
 
 
 
@@ -68306,7 +68307,7 @@ if (data.misp) {
 
 
 
-        if (!confirm(`Are you sure you want to delete source "${name}" and all its stored articles?`)) return;
+        if (!confirm(`Bạn có chắc chắn muốn xóa nguồn "${name}" và toàn bộ bài viết đã lưu không?`)) return;
 
 
 
@@ -74047,7 +74048,7 @@ if (data.misp) {
 
 
 
-                            if (!confirm("Are you sure you want to remove MTProto authentication? You will need to log in again.")) return;
+                            if (!confirm("Bạn có chắc chắn muốn xóa xác thực MTProto không? Bạn sẽ cần đăng nhập lại.")) return;
 
 
 

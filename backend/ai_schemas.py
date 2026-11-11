@@ -45,7 +45,7 @@ def _recover_json(raw: str) -> Tuple[Any, bool]:
     recovered = text
     recovered = re.sub(r',\s*"[^"]*"?\s*:\s*"[^"]*$', '', recovered)
     recovered = re.sub(r',\s*"[^"]*"?\s*:\s*\[[^\]]*$', '', recovered)
-    if recovered and not recovered.rstrip().endswith((",", "{")):
+    if recovered and not recovered.rstrip().endswith(","):
         d_br = recovered.count("[") - recovered.count("]")
         d_cu = recovered.count("{") - recovered.count("}")
         recovered = recovered.rstrip().rstrip(",")

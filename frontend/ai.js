@@ -3175,7 +3175,7 @@
 
                 <label>Tên doanh nghiệp (tùy chọn)<input type="text" id="ai-org-name" maxlength="80" placeholder="VD: LPBS — hiển thị trong báo cáo"></label>
 
-                <label>Tiêu đề báo cáo tùy chỉnh (tùy chọn)<input type="text" id="ai-report-title" maxlength="120" placeholder="VD: MANTIS // LPBS // Báo cáo Tình báo Mối đe dọa"></label>
+                <label>Tiêu đề báo cáo tùy chỉnh (tùy chọn)<input type="text" id="ai-report-title" maxlength="120" placeholder="VD: Metis // LPBS // Báo cáo Tình báo Mối đe dọa"></label>
 
                 <label>Mô hình phân tích sâu (tùy chọn)<input type="text" id="ai-model-deep" maxlength="120" placeholder="Để trống = dùng mô hình mặc định — VD: gpt-4o cho báo cáo chuyên sâu"></label>
 
@@ -4111,7 +4111,7 @@
 
                 abortController.abort();
 
-                stopBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Dismiss';
+                stopBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Đóng';
 
                 stopBtn.classList.add('dismiss');
 
@@ -4119,7 +4119,7 @@
 
                 if (logBox) {
 
-                    logBox.innerHTML += '<div style="color:var(--amber); margin-top:6px; font-weight:600;"><i class="fa-solid fa-triangle-exclamation"></i> Investigation halted by analyst.</div>';
+                    logBox.innerHTML += '<div style="color:var(--amber); margin-top:6px; font-weight:600;"><i class="fa-solid fa-triangle-exclamation"></i> Điều tra đã bị dừng bởi nhà phân tích.</div>';
 
                     logBox.scrollTop = logBox.scrollHeight;
 
@@ -4246,7 +4246,7 @@
 
             if (enrichDesc) {
 
-                enrichDesc.textContent = `Normalized ${obs.length} observation(s), ${claims.length} claim(s); flagged ${noise} benign/shared noise item(s).`;
+                enrichDesc.textContent = `Đã chuẩn hóa ${obs.length} quan sát, ${claims.length} tuyên bố; đã đánh dấu ${noise} mục nhiễu lành tính/chung.`;
 
             }
 
@@ -4536,7 +4536,7 @@
 
                 if (logBox) {
 
-                    logBox.innerHTML += '<div style="color:var(--amber); margin-top:6px; font-weight:600;"><i class="fa-solid fa-triangle-exclamation"></i> Investigation halted by analyst.</div>';
+                    logBox.innerHTML += '<div style="color:var(--amber); margin-top:6px; font-weight:600;"><i class="fa-solid fa-triangle-exclamation"></i> Điều tra đã bị dừng bởi nhà phân tích.</div>';
 
                     logBox.scrollTop = logBox.scrollHeight;
 
@@ -4554,7 +4554,7 @@
 
                 if (stopBtn) {
 
-                    stopBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Dismiss';
+                    stopBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Đóng';
 
                     stopBtn.classList.add('dismiss');
 

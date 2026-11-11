@@ -327,7 +327,7 @@
 
                                 <strong>Analyze a local path</strong>
 
-                                <span>File or directory accessible from the MANTIS host</span>
+                                <span>File hoặc thư mục có thể truy cập từ máy chủ Metis</span>
 
                             </div>
 

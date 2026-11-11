@@ -26,51 +26,6 @@ import ai_schemas
 import cti_db
 
 
-def _try_recover_json(raw: str) -> Tuple[Any, bool]:
-    """Try to parse JSON, with recovery for truncated responses.
-
-    Returns (parsed_data, was_recovered) where was_recovered=True means
-    the JSON was truncated and we recovered a partial result.
-    """
-    text = (raw or "").strip()
-    # Strip markdown code fences
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE).strip()
-        text = re.sub(r"\s*```$", "", text).strip()
-
-    # Try direct parse
-    try:
-        return json.loads(text or "{}"), False
-    except ValueError:
-        pass
-
-    # Try to recover truncated JSON by closing open structures
-    recovered = text
-    # Strip incomplete trailing value (e.g. "key": "incomplete str...)
-    recovered = re.sub(r',\s*"[^"]*"?\s*:\s*"[^"]*$', '', recovered)
-    recovered = re.sub(r',\s*"[^"]*"?\s*:\s*\[[^\]]*$', '', recovered)
-    # Close open structures
-    if recovered and not recovered.rstrip().endswith((",", "{")):
-        depth_bracket2 = recovered.count("[") - recovered.count("]")
-        depth_brace2 = recovered.count("{") - recovered.count("}")
-        recovered = recovered.rstrip().rstrip(",")
-        recovered += "]" * max(0, depth_bracket2)
-        recovered += "}" * max(0, depth_brace2)
-    try:
-        return json.loads(recovered), True
-    except ValueError:
-        pass
-
-    # Last resort: extract string fields with regex
-    partial: Dict[str, Any] = {}
-    for m in re.finditer(r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
-        partial[m.group(1)] = m.group(2)
-    if partial:
-        return partial, True
-
-    raise ValueError(f"JSON completely unrecoverable. First 200 chars: {text[:200]!r}")
-
-
 def _token_floor_settings(settings: dict, floor: int) -> dict:
     """Return a copy of settings with max_output_tokens raised to at least floor."""
     s = dict(settings)
@@ -111,7 +66,7 @@ MALWARE_HINT_RE = re.compile(
 IP_RE = re.compile(r"\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b")
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 
-HTTP_HEADERS = {"User-Agent": "MANTIS-Todays-Intelligence/1.0"}
+HTTP_HEADERS = {"User-Agent": "Metis-Todays-Intelligence/1.0"}
 
 COUNTRY_FOCUS_TERMS = {
     "my": ["malaysia", "malaysian"],
@@ -212,10 +167,10 @@ def _range_days(mode: str) -> int:
 def _range_label(mode: str) -> str:
     mode = _range_mode(mode)
     if mode == "24h":
-        return "Past 24H"
+        return "24 giờ qua"
     if mode == "7d":
-        return "Past 7D"
-    return "Today"
+        return "7 ngày qua"
+    return "Hôm nay"
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -522,6 +477,8 @@ def today_articles(limit: int = 30, source_type: str = "", range_mode: str = "to
         if source_type:
             wanted = source_type.strip().lower()
             items = [row for row in items if wanted in (row.get("category") or "").lower() or wanted in (row.get("source") or "").lower()]
+            total = len(items)
+            items = items[:limit]
         if terms:
             items = [row for row in items if _matches_focus(row, terms, ["title", "excerpt", "source", "category"])]
             total = len(items)
@@ -1373,7 +1330,7 @@ def source_health(cti: Dict[str, Any], kev: Dict[str, Any], pocs: Dict[str, Any]
     health.append(_health_item("RansomLook", "available" if ransom_sources else "no data", "", bool(ransom_sources or ransom.get("items"))))
     health.append(_health_item("ransomware.live", "key configured" if rwlive_key else "key missing", "", rwlive_key))
     ai_settings = ai_service._settings_raw()
-    ai_ready = bool(ai_settings.get("api_key") and ai_settings.get("endpoint") and ai_settings.get("model"))
+    ai_ready = ai_service._settings_available(ai_settings)
     health.append(_health_item("AI", "ready" if ai_ready else "not configured", ai_settings.get("model") or "", ai_ready))
     for key, label in (
         ("regional_certs", "CERTs"),
@@ -1402,7 +1359,10 @@ def _cve_set(items: List[Dict[str, Any]], *fields: str) -> set:
 
 def _priority_label(is_kev: bool, epss: Any) -> str:
     """Tính nhãn ưu tiên P1-P5 theo chuẩn EPSS/KEV."""
-    v = float(epss) if epss is not None else 0.0
+    try:
+        v = float(epss) if epss is not None else 0.0
+    except (TypeError, ValueError):
+        v = 0.0
     if is_kev and v >= 0.7:
         return "P1"
     if is_kev:
