@@ -4,13 +4,19 @@ import json
 import logging
 import sqlite3
 import requests
-from feed_intel import connect
+from feed_intel import connect, init_db
 
 logger = logging.getLogger("mantis.feed_manager")
+
+
+def _ensure_db():
+    """Đảm bảo schema DB đã được tạo trước khi dùng."""
+    init_db()
 
 CATALOG_URL = "https://raw.githubusercontent.com/Bert-JanP/Open-Source-Threat-Intel-Feeds/refs/heads/main/ThreatIntelFeeds.csv"
 
 def sync_catalog():
+    _ensure_db()
     conn = None
     try:
         resp = requests.get(CATALOG_URL, timeout=15)
@@ -70,12 +76,14 @@ def sync_catalog():
             conn.close()
 
 def get_feed_list():
+    _ensure_db()
     conn = connect()
     rows = conn.execute("SELECT id, name, source_url, enabled, status, record_count, is_dynamic, description FROM feed_sources ORDER BY name").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 def toggle_feed(fid: str, enabled: bool):
+    _ensure_db()
     conn = connect()
     try:
         cursor = conn.execute("UPDATE feed_sources SET enabled = ? WHERE id = ?", (1 if enabled else 0, fid))
