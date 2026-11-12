@@ -82611,30 +82611,38 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         const assetList = swState.assets;
         const overlay = document.createElement('div');
         overlay.className = 'sw-modal-overlay';
+        const inputStyle = 'width:100%;box-sizing:border-box;padding:5px 8px;background:rgba(10,14,23,0.95);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--text-main);font-size:0.85rem;';
         overlay.innerHTML = `
 <div class="sw-modal" style="max-width:520px;">
   <h3><i class="fa-solid fa-file-csv" style="color:var(--accent);margin-right:8px;"></i>Xuất báo cáo CVE</h3>
-  <div class="sw-form-row">
-    <label style="font-weight:600;margin-bottom:8px;display:block;">Phạm vi xuất</label>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;">
-      <input type="radio" name="sw-export-scope" value="all" checked style="accent-color:var(--accent);"> Toàn bộ phần mềm đang có
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;">
-      <input type="radio" name="sw-export-scope" value="env" style="accent-color:var(--accent);"> Lọc theo môi trường:&nbsp;
-      <select id="sw-export-env" style="flex:1;padding:4px 8px;background:rgba(10,14,23,0.95);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--text-main);font-size:0.85rem;">
-        ${envList.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('')}
-      </select>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-      <input type="radio" name="sw-export-scope" value="select" style="accent-color:var(--accent);margin-top:3px;"> Chọn phần mềm cụ thể:
-    </label>
-    <div id="sw-export-asset-list" style="display:none;margin-top:8px;max-height:160px;overflow-y:auto;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px;">
-      ${assetList.map(a => `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:0.85rem;">
-        <input type="checkbox" class="sw-export-asset-cb" value="${escapeHtml(String(a.id))}" style="accent-color:var(--accent);">
-        ${escapeHtml(a.software_name)}${a.environment ? ` <span style="color:var(--text-muted);font-size:0.78rem;">(${escapeHtml(a.environment)})</span>` : ''}
-      </label>`).join('')}
-    </div>
+  <div style="margin-bottom:10px;font-weight:600;font-size:0.85rem;color:var(--text-main);">Phạm vi xuất</div>
+
+  <label class="sw-export-opt">
+    <input type="radio" id="sw-scope-all" name="sw-export-scope" value="all" checked style="accent-color:var(--accent);">
+    <span>Toàn bộ phần mềm đang có</span>
+  </label>
+
+  <label class="sw-export-opt">
+    <input type="radio" id="sw-scope-env" name="sw-export-scope" value="env" style="accent-color:var(--accent);">
+    <span>Lọc theo môi trường</span>
+  </label>
+  <div class="sw-export-sub" id="sw-env-ctrl" style="display:none;">
+    <select id="sw-export-env" style="${inputStyle}">
+      ${envList.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('')}
+    </select>
   </div>
+
+  <label class="sw-export-opt">
+    <input type="radio" id="sw-scope-select" name="sw-export-scope" value="select" style="accent-color:var(--accent);">
+    <span>Chọn phần mềm cụ thể</span>
+  </label>
+  <div class="sw-export-sub" id="sw-export-asset-list" style="display:none;max-height:160px;overflow-y:auto;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px;">
+    ${assetList.map(a => `<label class="sw-export-opt" style="padding:3px 0;">
+      <input type="checkbox" class="sw-export-asset-cb" value="${escapeHtml(String(a.id))}" style="accent-color:var(--accent);">
+      <span style="font-size:0.85rem;">${escapeHtml(a.software_name)}${a.environment ? ` <span style="color:var(--text-muted);font-size:0.78rem;">(${escapeHtml(a.environment)})</span>` : ''}</span>
+    </label>`).join('')}
+  </div>
+
   <div class="sw-btn-row" style="margin-top:16px;">
     <button id="sw-export-cancel" class="sw-btn">Hủy</button>
     <button id="sw-export-ok" class="sw-btn sw-btn-primary"><i class="fa-solid fa-download"></i> Xuất CSV</button>
@@ -82642,10 +82650,19 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 </div>`;
         document.body.appendChild(overlay);
         const radios = overlay.querySelectorAll('input[name="sw-export-scope"]');
+        const envCtrl = overlay.querySelector('#sw-env-ctrl');
         const assetListDiv = overlay.querySelector('#sw-export-asset-list');
-        radios.forEach(r => r.addEventListener('change', () => {
-            assetListDiv.style.display = r.value === 'select' && r.checked ? 'block' : 'none';
-        }));
+        const toggle = () => {
+            const scope = [...radios].find(r => r.checked)?.value;
+            envCtrl.style.display = scope === 'env' ? 'block' : 'none';
+            assetListDiv.style.display = scope === 'select' ? 'block' : 'none';
+        };
+        radios.forEach(r => r.addEventListener('change', toggle));
+        // Click select → auto-check radio env
+        overlay.querySelector('#sw-export-env').addEventListener('focus', () => {
+            overlay.querySelector('#sw-scope-env').checked = true;
+            toggle();
+        });
         overlay.querySelector('#sw-export-cancel').addEventListener('click', () => overlay.remove());
         overlay.querySelector('#sw-export-ok').addEventListener('click', async () => {
             const scope = [...radios].find(r => r.checked)?.value || 'all';
