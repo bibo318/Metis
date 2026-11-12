@@ -598,9 +598,11 @@ def sw_scan(asset_id: Optional[int] = None):
         raise HTTPException(500, str(exc))
 
 @app.get("/api/software-watch/export-alerts")
-def sw_export_alerts(asset_id: Optional[int] = None, status: str = "", severity: str = ""):
+def sw_export_alerts(asset_id: Optional[int] = None, status: str = "", severity: str = "",
+                     environment: str = "", asset_ids: str = ""):
     try:
-        csv_text = sw_mod.export_alerts_csv(asset_id=asset_id, status=status, severity=severity)
+        csv_text = sw_mod.export_alerts_csv(asset_id=asset_id, status=status, severity=severity,
+                                             environment=environment, asset_ids=asset_ids)
         from fastapi.responses import Response
         return Response(
             content=csv_text.encode("utf-8-sig"),

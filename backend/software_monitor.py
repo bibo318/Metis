@@ -532,7 +532,8 @@ def scan_all() -> Dict:
 
 
 def export_alerts_csv(asset_id: Optional[int] = None, status: str = "",
-                      severity: str = "") -> str:
+                      severity: str = "", environment: str = "",
+                      asset_ids: str = "") -> str:
     """Xuất cảnh báo CVE ra CSV."""
     init_db()
     conn = _connect()
@@ -542,33 +543,45 @@ def export_alerts_csv(asset_id: Optional[int] = None, status: str = "",
         if asset_id is not None:
             clauses.append("al.asset_id=?")
             params.append(asset_id)
+        if asset_ids:
+            id_list = [i.strip() for i in asset_ids.split(",") if i.strip().isdigit()]
+            if id_list:
+                clauses.append(f"al.asset_id IN ({','.join(['?']*len(id_list))})")
+                params.extend(id_list)
         if status:
             clauses.append("al.status=?")
             params.append(status)
         if severity:
             clauses.append("al.severity=?")
             params.append(severity.upper())
+        if environment:
+            clauses.append("a.environment=?")
+            params.append(environment)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = conn.execute(
-            f"SELECT al.*, a.software_name, a.vendor, a.system_name, a.environment "
+            f"SELECT al.*, a.software_name, a.vendor, a.version as asset_version, "
+            f"a.system_name, a.environment "
             f"FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id "
-            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC",
+            f"{where} ORDER BY a.software_name, al.is_kev DESC, al.epss DESC, al.created_at DESC",
             params
         ).fetchall()
         out = io.StringIO()
         writer = csv.writer(out)
         writer.writerow([
-            "Phần mềm", "Hệ thống", "Môi trường", "CVE", "Tiêu đề",
-            "Mức độ", "EPSS (%)", "Trong KEV", "Số PoC", "Ngày phát hiện", "Trạng thái"
+            "Phần mềm", "Hãng cung cấp", "Phiên bản", "Hệ thống", "Môi trường",
+            "CVE", "Tiêu đề", "Mức độ", "EPSS (%)", "Trong KEV",
+            "Số PoC", "Ngày phát hiện", "Trạng thái", "Link NVD"
         ])
         for r in rows:
             epss_pct = f"{float(r['epss'] or 0) * 100:.1f}%" if r['epss'] else "0.0%"
             writer.writerow([
-                r["software_name"], r["system_name"], r["environment"],
+                r["software_name"], r["vendor"] or "", r["asset_version"] or "",
+                r["system_name"], r["environment"],
                 r["cve_id"], r["title"] or "", r["severity"] or "",
                 epss_pct, "Có" if r["is_kev"] else "Không",
                 r["poc_count"] or 0, r["published"] or "",
-                "Mới" if r["status"] == "new" else "Đã xem"
+                "Mới" if r["status"] == "new" else "Đã xem",
+                f"https://nvd.nist.gov/vuln/detail/{r['cve_id']}" if r["cve_id"] else ""
             ])
         return out.getvalue()
     finally:

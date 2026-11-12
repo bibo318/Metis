@@ -82165,6 +82165,11 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         }
     }
 
+    function swGetEnvList() {
+        const envs = [...new Set(swState.assets.map(a => a.environment).filter(Boolean))].sort();
+        return envs.length ? envs : ['Production (PRD)', 'Staging', 'Development'];
+    }
+
     function swRenderAssets(el) {
         const lastScan = localStorage.getItem('sw_last_scan');
         let lastScanText = '';
@@ -82180,9 +82185,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <input type="text" id="sw-search" placeholder="Tìm kiếm phần mềm..." value="${escapeHtml(swState.search)}">
   <select id="sw-env-filter">
     <option value="">Tất cả môi trường</option>
-    <option value="Production" ${swState.envFilter === 'Production' ? 'selected' : ''}>Production (PRD)</option>
-    <option value="Staging" ${swState.envFilter === 'Staging' ? 'selected' : ''}>Staging</option>
-    <option value="Development" ${swState.envFilter === 'Development' ? 'selected' : ''}>Development</option>
+    ${swGetEnvList().map(e => `<option value="${escapeHtml(e)}" ${swState.envFilter === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
   </select>
   <button id="sw-toggle-group" class="sw-btn ${swState.groupBySystem ? 'sw-btn-active' : ''}" title="Nhóm theo hệ thống">
     <i class="fa-solid fa-layer-group"></i> Nhóm hệ thống
@@ -82322,6 +82325,12 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
                 vb = sevOrder[(b.severity || '').toUpperCase()] || 0;
             } else if (swState.alertSortBy === 'published') {
                 va = a.published || ''; vb = b.published || '';
+            } else if (swState.alertSortBy === 'title') {
+                va = (a.title || '').toLowerCase(); vb = (b.title || '').toLowerCase();
+            } else if (swState.alertSortBy === 'software_name') {
+                va = (a.software_name || '').toLowerCase(); vb = (b.software_name || '').toLowerCase();
+            } else if (swState.alertSortBy === 'environment') {
+                va = (a.environment || '').toLowerCase(); vb = (b.environment || '').toLowerCase();
             } else {
                 va = a.cve_id || ''; vb = b.cve_id || '';
             }
@@ -82364,7 +82373,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 <div style="overflow-x:auto;">
 <table class="sw-asset-table">
   <thead><tr>
-    ${swSortTh('cve_id','CVE')}<th>Tiêu đề</th>${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}<th>Phần mềm</th><th>Môi trường</th>${swSortTh('published','Ngày')}<th>Hành động</th>
+    ${swSortTh('cve_id','CVE')}${swSortTh('title','Tiêu đề')}${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}${swSortTh('software_name','Phần mềm')}${swSortTh('environment','Môi trường')}${swSortTh('published','Ngày')}<th>Hành động</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
@@ -82384,7 +82393,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             swState.severityFilter = e.target.value;
             swLoadAndRender();
         });
-        el.querySelector('#sw-export-alerts')?.addEventListener('click', () => swDoExportAlerts());
+        el.querySelector('#sw-export-alerts')?.addEventListener('click', () => swShowExportModal());
         el.querySelector('#sw-ack-all')?.addEventListener('click', () => swAckAll());
         el.querySelectorAll('.sw-sort-th').forEach(th => th.addEventListener('click', () => {
             const col = th.dataset.col;
@@ -82571,19 +82580,85 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         }
     }
 
-    async function swDoExportAlerts() {
+    function swShowExportModal() {
+        const envList = swGetEnvList();
+        const assetList = swState.assets;
+        const overlay = document.createElement('div');
+        overlay.className = 'sw-modal-overlay';
+        overlay.innerHTML = `
+<div class="sw-modal" style="max-width:520px;">
+  <h3><i class="fa-solid fa-file-csv" style="color:var(--accent);margin-right:8px;"></i>Xuất báo cáo CVE</h3>
+  <div class="sw-form-row">
+    <label style="font-weight:600;margin-bottom:8px;display:block;">Phạm vi xuất</label>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;">
+      <input type="radio" name="sw-export-scope" value="all" checked style="accent-color:var(--accent);"> Toàn bộ phần mềm đang có
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;">
+      <input type="radio" name="sw-export-scope" value="env" style="accent-color:var(--accent);"> Lọc theo môi trường:&nbsp;
+      <select id="sw-export-env" style="flex:1;padding:4px 8px;background:rgba(10,14,23,0.95);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--text-main);font-size:0.85rem;">
+        ${envList.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('')}
+      </select>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+      <input type="radio" name="sw-export-scope" value="select" style="accent-color:var(--accent);margin-top:3px;"> Chọn phần mềm cụ thể:
+    </label>
+    <div id="sw-export-asset-list" style="display:none;margin-top:8px;max-height:160px;overflow-y:auto;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px;">
+      ${assetList.map(a => `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:0.85rem;">
+        <input type="checkbox" class="sw-export-asset-cb" value="${escapeHtml(String(a.id))}" style="accent-color:var(--accent);">
+        ${escapeHtml(a.software_name)}${a.environment ? ` <span style="color:var(--text-muted);font-size:0.78rem;">(${escapeHtml(a.environment)})</span>` : ''}
+      </label>`).join('')}
+    </div>
+  </div>
+  <div class="sw-btn-row" style="margin-top:16px;">
+    <button id="sw-export-cancel" class="sw-btn">Hủy</button>
+    <button id="sw-export-ok" class="sw-btn sw-btn-primary"><i class="fa-solid fa-download"></i> Xuất CSV</button>
+  </div>
+</div>`;
+        document.body.appendChild(overlay);
+        const radios = overlay.querySelectorAll('input[name="sw-export-scope"]');
+        const assetListDiv = overlay.querySelector('#sw-export-asset-list');
+        radios.forEach(r => r.addEventListener('change', () => {
+            assetListDiv.style.display = r.value === 'select' && r.checked ? 'block' : 'none';
+        }));
+        overlay.querySelector('#sw-export-cancel').addEventListener('click', () => overlay.remove());
+        overlay.querySelector('#sw-export-ok').addEventListener('click', async () => {
+            const scope = [...radios].find(r => r.checked)?.value || 'all';
+            const env = overlay.querySelector('#sw-export-env').value;
+            const selectedIds = [...overlay.querySelectorAll('.sw-export-asset-cb:checked')].map(c => c.value);
+            if (scope === 'select' && selectedIds.length === 0) {
+                swShowToast('Vui lòng chọn ít nhất một phần mềm.', 'error'); return;
+            }
+            overlay.remove();
+            await swDoExportAlerts({ scope, environment: env, asset_ids: selectedIds.join(',') });
+        });
+    }
+
+    async function swDoExportAlerts(opts = {}) {
         try {
             const params = new URLSearchParams();
-            if (swState.selectedAsset) params.set('asset_id', String(swState.selectedAsset));
-            if (swState.alertFilter) params.set('status', swState.alertFilter);
-            if (swState.severityFilter) params.set('severity', swState.severityFilter);
+            const scope = opts.scope || 'current';
+            if (scope === 'current') {
+                if (swState.selectedAsset) params.set('asset_id', String(swState.selectedAsset));
+                if (swState.alertFilter) params.set('status', swState.alertFilter);
+                if (swState.severityFilter) params.set('severity', swState.severityFilter);
+            } else if (scope === 'env' && opts.environment) {
+                params.set('environment', opts.environment);
+            } else if (scope === 'select' && opts.asset_ids) {
+                params.set('asset_ids', opts.asset_ids);
+            }
+            const ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '');
+            const fileName = scope === 'env'
+                ? `cve_bao_cao_${opts.environment || 'env'}_${ts}.csv`
+                : scope === 'select'
+                    ? `cve_bao_cao_chon_${ts}.csv`
+                    : `cve_bao_cao_tatca_${ts}.csv`;
             const r = await fetch(`${SW_API}/export-alerts?${params}`);
             if (!r.ok) { swShowToast('Lỗi xuất báo cáo CVE.', 'error'); return; }
             const blob = await r.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'cve_alerts.csv';
+            a.download = fileName;
             a.click();
             URL.revokeObjectURL(url);
         } catch (e) {
@@ -82790,12 +82865,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <div class="sw-form-row"><label>Hãng cung cấp</label><input id="sw-f-vendor" type="text" value="${escapeHtml(asset?.vendor || '')}" placeholder="VD: Redis Ltd."></div>
   <div class="sw-form-row"><label>Phiên bản</label><input id="sw-f-version" type="text" value="${escapeHtml(asset?.version || '')}" placeholder="VD: v7.4.1"></div>
   <div class="sw-form-row"><label>Hệ thống / Dự án</label><input id="sw-f-sys" type="text" value="${escapeHtml(asset?.system_name || '')}" placeholder="VD: Nền tảng Kubernetes"></div>
-  <div class="sw-form-row"><label>Môi trường</label><select id="sw-f-env">
-    <option value="">—</option>
-    <option value="Production (PRD)" ${(asset?.environment||'').includes('Production') ? 'selected' : ''}>Production (PRD)</option>
-    <option value="Staging" ${asset?.environment === 'Staging' ? 'selected' : ''}>Staging</option>
-    <option value="Development" ${asset?.environment === 'Development' ? 'selected' : ''}>Development</option>
-  </select></div>
+  <div class="sw-form-row"><label>Môi trường</label>
+    <input id="sw-f-env" type="text" list="sw-env-datalist" value="${escapeHtml(asset?.environment || '')}" placeholder="VD: Production (PRD), UAT, Staging...">
+    <datalist id="sw-env-datalist">${swGetEnvList().map(e => `<option value="${escapeHtml(e)}">`).join('')}</datalist>
+  </div>
   <div class="sw-form-row"><label>Ghi chú</label><input id="sw-f-notes" type="text" value="${escapeHtml(asset?.notes || '')}"></div>
   <div class="sw-btn-row">
     <button id="sw-add-cancel" class="sw-btn">Hủy</button>
