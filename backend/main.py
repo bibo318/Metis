@@ -3,7 +3,7 @@
 # Xem NOTICE.md để biết chi tiết attribution
 import json
 import binary_lab as binary_lab_mod
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 import requests
 from typing import Any, Dict, List, Optional
@@ -564,11 +564,11 @@ def sw_export_csv():
 
 @app.get("/api/software-watch/alerts")
 def sw_get_alerts(asset_id: Optional[int] = None, status: str = "",
-                  severity: str = "", limit: int = 200):
+                  severity: str = "", page: int = 1, per_page: int = 100):
     try:
-        return {"alerts": sw_mod.get_alerts(
-            asset_id=asset_id, status=status, severity=severity, limit=limit
-        )}
+        return sw_mod.get_alerts(
+            asset_id=asset_id, status=status, severity=severity, page=page, per_page=per_page
+        )
     except Exception as exc:
         raise HTTPException(500, str(exc))
 
@@ -699,6 +699,52 @@ def sw_summary():
         return sw_mod.get_summary()
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+@app.get("/api/software-watch/settings")
+def sw_get_settings():
+    return {
+        "webhook_url": sw_mod.get_setting("webhook_url", ""),
+        "webhook_enabled": sw_mod.get_setting("webhook_enabled", "1") == "1",
+    }
+
+
+@app.post("/api/software-watch/settings")
+def sw_save_settings(payload: dict = Body(...)):
+    if "webhook_url" in payload:
+        url = str(payload["webhook_url"])[:512]
+        if url and not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "URL phải bắt đầu bằng http:// hoặc https://")
+        sw_mod.save_setting("webhook_url", url)
+    if "webhook_enabled" in payload:
+        sw_mod.save_setting("webhook_enabled", "1" if payload["webhook_enabled"] else "0")
+    return {"ok": True}
+
+
+@app.post("/api/software-watch/settings/test-webhook")
+def sw_test_webhook(payload: dict = Body(...)):
+    import json as _json, urllib.request as _req, ssl as _ssl
+    url = str(payload.get("url", ""))[:512]
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "URL không hợp lệ")
+    test_payload = {"title": "✅ Test Metis Webhook",
+                    "message": "Kết nối webhook thành công từ Metis!", "test": True}
+    headers = {"Content-Type": "application/json"}
+    if "ntfy.sh" in url:
+        headers["Title"] = "Test Metis Webhook"
+        headers["Priority"] = "low"
+    try:
+        data = _json.dumps(test_payload).encode()
+        req = _req.Request(url, data=data, headers=headers, method="POST")
+        ctx = _ssl.create_default_context()
+        import os as _os
+        cafile = "/root/.ccr/ca-bundle.crt"
+        if _os.path.exists(cafile):
+            ctx.load_verify_locations(cafile)
+        with _req.urlopen(req, timeout=5, context=ctx) as resp:
+            return {"ok": True, "status": resp.status}
+    except Exception as exc:
+        raise HTTPException(502, f"Webhook thất bại: {exc}")
 
 # Deployment mode note: this deployment mode stores API credentials in the
 # browser (localStorage). Use only on trusted/local deployments.

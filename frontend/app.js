@@ -849,6 +849,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         'samples-downloader-pane',
         'vt-monitoring-pane',
+        'vt-livehunt-pane',
 
 
 
@@ -15439,6 +15440,20 @@ const KEY_STORE = {
                 tabTitle.textContent = 'Giám sát mối đe dọa VirusTotal';
                 currentViewIsAuxiliary = true;
                 if (typeof openVtMonitoring === 'function') openVtMonitoring();
+                return;
+            } else if (currentTab === 'vt-livehunt') {
+                setKeywordModeVisible(false);
+                if (searchContainer) searchContainer.style.display = 'none';
+                if (sourceSelectorPanel) sourceSelectorPanel.style.display = 'none';
+                if (resultsContainer) resultsContainer.style.display = 'none';
+                if (headerActions) headerActions.style.display = 'none';
+                hideResultsNavigation();
+                hideAuxiliaryPanes();
+                const vtHuntPane = document.getElementById('vt-livehunt-pane');
+                if (vtHuntPane) vtHuntPane.style.display = 'block';
+                tabTitle.textContent = 'VT LiveHunt';
+                currentViewIsAuxiliary = true;
+                vtLivehuntOpen();
                 return;
 
 
@@ -80222,11 +80237,73 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 
     let homeInteractionsBound = false;
 
-
-
-
-
-
+    async function renderHomeDashboard() {
+        const dash = document.getElementById('home-dashboard');
+        if (!dash) return;
+        dash.style.display = 'block';
+        const statusEl = document.getElementById('home-dash-refresh-status');
+        const kpiGrid = document.getElementById('home-kpi-grid');
+        const topCves = document.getElementById('home-top-cves');
+        if (statusEl) statusEl.textContent = 'Đang tải...';
+        try {
+            const [intelRes, swRes] = await Promise.allSettled([
+                fetch('/api/todays-intelligence', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({range_mode:'today'})}),
+                fetch('/api/software-watch/alerts?status=new&severity=')
+            ]);
+            const intel = intelRes.status === 'fulfilled' && intelRes.value.ok ? await intelRes.value.json() : null;
+            const swData = swRes.status === 'fulfilled' && swRes.value.ok ? await swRes.value.json() : null;
+            const stats = intel?.stats || {};
+            const priorityCves = intel?.priority_cves || [];
+            const swAlerts = swData?.alerts || [];
+            const p1 = priorityCves.filter(c => c.priority_label === 'P1').length;
+            const p2 = priorityCves.filter(c => c.priority_label === 'P2').length;
+            const kev = stats.kev_count || 0;
+            const poc24h = stats.poc_count || 0;
+            const swCrit = swAlerts.filter(a => a.severity === 'CRITICAL').length;
+            const swHigh = swAlerts.filter(a => a.severity === 'HIGH').length;
+            const ransom = stats.ransom_victims_24h || stats.ransomware_victims || 0;
+            const srcHealth = intel?.source_health || {};
+            const srcOk = Object.values(srcHealth).filter(s => s?.status === 'ok' || s?.count > 0).length;
+            const srcTotal = Object.keys(srcHealth).length || 1;
+            kpiGrid.innerHTML = `
+                <div class="home-kpi-tile home-kpi-p1"><div class="home-kpi-num">${p1}</div><div class="home-kpi-label">CVE P1</div></div>
+                <div class="home-kpi-tile home-kpi-p2"><div class="home-kpi-num">${p2}</div><div class="home-kpi-label">CVE P2</div></div>
+                <div class="home-kpi-tile home-kpi-kev"><div class="home-kpi-num">${kev}</div><div class="home-kpi-label">KEV Hôm Nay</div></div>
+                <div class="home-kpi-tile home-kpi-poc"><div class="home-kpi-num">${poc24h}</div><div class="home-kpi-label">PoC Mới</div></div>
+                <div class="home-kpi-tile ${swCrit > 0 ? 'home-kpi-danger' : ''}"><div class="home-kpi-num">${swCrit}</div><div class="home-kpi-label">SW Critical</div></div>
+                <div class="home-kpi-tile"><div class="home-kpi-num">${swHigh}</div><div class="home-kpi-label">SW High</div></div>
+                <div class="home-kpi-tile"><div class="home-kpi-num">${ransom}</div><div class="home-kpi-label">Nạn Nhân RW</div></div>
+                <div class="home-kpi-tile ${srcOk < srcTotal * 0.7 ? 'home-kpi-warn' : 'home-kpi-ok'}"><div class="home-kpi-num">${srcOk}/${srcTotal}</div><div class="home-kpi-label">Nguồn OK</div></div>
+            `;
+            const topList = priorityCves.slice(0, 5);
+            topCves.innerHTML = topList.length ? `
+                <div class="home-top-cves-title">CVE Ưu Tiên Hàng Đầu</div>
+                <table class="home-cve-table">
+                    <thead><tr><th>CVE</th><th>Độ ưu tiên</th><th>EPSS</th><th>Nhà cung cấp / Sản phẩm</th></tr></thead>
+                    <tbody>${topList.map(c => `<tr>
+                        <td><a href="https://nvd.nist.gov/vuln/detail/${escapeHtml(c.cve)}" target="_blank" class="home-cve-link">${escapeHtml(c.cve)}</a></td>
+                        <td><span class="priority-badge priority-${escapeHtml((c.priority_label||'p5').toLowerCase())}">${escapeHtml(c.priority_label||'P5')}</span>${c.kev_date ? ' <span class="poc-chip is-kev" style="font-size:0.65rem;padding:1px 4px;">KEV</span>' : ''}</td>
+                        <td>${c.epss != null ? (parseFloat(c.epss)*100).toFixed(1)+'%' : '—'}</td>
+                        <td>${escapeHtml((c.vendor||'') + (c.product ? ' / '+c.product : ''))}</td>
+                    </tr>`).join('')}</tbody>
+                </table>
+            ` : '<div class="home-top-cves-empty">Chưa có dữ liệu CVE hôm nay</div>';
+            const now = new Date();
+            if (statusEl) statusEl.textContent = `Cập nhật: ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
+        } catch(e) {
+            if (kpiGrid) kpiGrid.innerHTML = '<div class="home-kpi-loading" style="color:var(--danger)">Lỗi tải dữ liệu</div>';
+            console.error('renderHomeDashboard error:', e);
+        }
+        if (!window._homeDashRefreshTimer) {
+            window._homeDashRefreshTimer = setInterval(renderHomeDashboard, 5 * 60 * 1000);
+        }
+        if (!window._homeDashRefreshBound) {
+            window._homeDashRefreshBound = true;
+            document.addEventListener('click', e => {
+                if (e.target.closest('#home-dash-refresh-btn')) renderHomeDashboard();
+            });
+        }
+    }
 
     function showHomePage() {
 
@@ -80354,7 +80431,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 
             startHomeGlobe();
 
-
+            renderHomeDashboard();
 
         }
 
@@ -81967,6 +82044,9 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         libSearch: '',
         libStatusFilter: '',
         loading: false,
+        alertPage: 1,
+        alertTotal: 0,
+        alertPerPage: 100,
     };
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -82016,7 +82096,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     }
 
     async function swFetchAlerts() {
-        const params = new URLSearchParams({ limit: '300' });
+        const params = new URLSearchParams({
+            page: String(swState.alertPage),
+            per_page: String(swState.alertPerPage),
+        });
         if (swState.selectedAsset) params.set('asset_id', String(swState.selectedAsset));
         if (swState.alertFilter) params.set('status', swState.alertFilter);
         if (swState.severityFilter) params.set('severity', swState.severityFilter);
@@ -82024,6 +82107,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         if (!r.ok) throw new Error('Lỗi tải cảnh báo');
         const d = await r.json();
         swState.alerts = d.alerts || [];
+        swState.alertTotal = d.total || 0;
     }
 
     async function swFetchLibraries() {
@@ -82130,6 +82214,9 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <button class="sw-tab-btn ${swState.tab === 'libraries' ? 'active' : ''}" data-sw-tab="libraries">
       <i class="fa-solid fa-box-archive"></i> Thư viện / Package
     </button>
+    <button class="sw-tab-btn ${swState.tab === 'settings' ? 'active' : ''}" data-sw-tab="settings">
+      <i class="fa-solid fa-gear"></i> Cài đặt
+    </button>
   </div>
 
   <div id="sw-tab-content"></div>
@@ -82160,8 +82247,62 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             swRenderAssets(el);
         } else if (swState.tab === 'libraries') {
             swRenderLibraries(el);
+        } else if (swState.tab === 'settings') {
+            swRenderSettings(el);
         } else {
             swRenderAlerts(el);
+        }
+    }
+
+    async function swRenderSettings(el) {
+        el.innerHTML = '<div style="padding:16px;color:var(--text-muted)">Đang tải cài đặt...</div>';
+        try {
+            const res = await fetch('/api/software-watch/settings');
+            const cfg = await res.json();
+            el.innerHTML = `<div style="max-width:520px;padding:20px 0;">
+                <div style="font-size:1rem;font-weight:700;color:var(--accent);margin-bottom:16px;"><i class="fa-solid fa-bell"></i> Thông báo Webhook</div>
+                <div class="sw-form-row">
+                    <label>Webhook URL</label>
+                    <input type="url" id="sw-webhook-url" placeholder="https://ntfy.sh/my-topic hoặc Slack/Discord webhook URL" value="${escapeHtml(cfg.webhook_url||'')}" style="width:100%;padding:7px 10px;background:rgba(10,14,23,0.95);border:1px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--text-main);font-size:0.85rem;">
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">Hỗ trợ ntfy.sh (thông báo điện thoại), Slack Incoming Webhook, Discord Webhook</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;margin:10px 0 6px;">
+                    <input type="checkbox" id="sw-webhook-enabled" ${cfg.webhook_enabled ? 'checked' : ''} style="accent-color:var(--accent);width:16px;height:16px;">
+                    <label for="sw-webhook-enabled" style="font-size:0.85rem;color:var(--text-main);cursor:pointer;">Kích hoạt thông báo</label>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:16px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;">
+                    Gửi thông báo khi phát hiện CVE mới <strong>CRITICAL</strong> hoặc <strong>HIGH</strong> với KEV hoặc EPSS ≥ 50%
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="sw-btn sw-btn-primary" id="sw-webhook-save"><i class="fa-solid fa-floppy-disk"></i> Lưu cài đặt</button>
+                    <button class="sw-btn" id="sw-webhook-test"><i class="fa-solid fa-flask"></i> Gửi thử</button>
+                </div>
+                <div id="sw-settings-msg" style="margin-top:10px;font-size:0.82rem;"></div>
+            </div>`;
+            document.getElementById('sw-webhook-save').addEventListener('click', async () => {
+                const url = document.getElementById('sw-webhook-url').value.trim();
+                const enabled = document.getElementById('sw-webhook-enabled').checked;
+                const msg = document.getElementById('sw-settings-msg');
+                try {
+                    const r = await fetch('/api/software-watch/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({webhook_url:url, webhook_enabled:enabled})});
+                    const d = await r.json();
+                    if (r.ok) { msg.style.color='#2ed573'; msg.textContent='✓ Đã lưu cài đặt'; }
+                    else { msg.style.color='var(--danger)'; msg.textContent='Lỗi: '+(d.detail||'Không thể lưu'); }
+                } catch(e) { msg.style.color='var(--danger)'; msg.textContent='Lỗi kết nối: '+e.message; }
+            });
+            document.getElementById('sw-webhook-test').addEventListener('click', async () => {
+                const url = document.getElementById('sw-webhook-url').value.trim();
+                const msg = document.getElementById('sw-settings-msg');
+                if (!url) { msg.style.color='var(--danger)'; msg.textContent='Nhập URL trước'; return; }
+                msg.style.color='var(--text-muted)'; msg.textContent='Đang gửi thử...';
+                try {
+                    const r = await fetch('/api/software-watch/settings/test-webhook', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url})});
+                    if (r.ok) { msg.style.color='#2ed573'; msg.textContent='✓ Webhook gửi thành công!'; }
+                    else { const d = await r.json(); msg.style.color='var(--danger)'; msg.textContent='Lỗi: '+(d.detail||'Thất bại'); }
+                } catch(e) { msg.style.color='var(--danger)'; msg.textContent='Lỗi: '+e.message; }
+            });
+        } catch(e) {
+            el.innerHTML = `<div style="color:var(--danger);padding:16px;">Lỗi tải cài đặt: ${escapeHtml(e.message)}</div>`;
         }
     }
 
@@ -82222,6 +82363,17 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
                 }
             }
             el.innerHTML = toolbar + `
+<div id="sw-charts-row" class="sw-charts-row" style="display:none;">
+  <div class="sw-chart-box">
+    <div class="sw-chart-label">Phân bổ Mức độ</div>
+    <canvas id="sw-donut-canvas" width="140" height="140"></canvas>
+    <div id="sw-chart-legend" class="sw-chart-legend"></div>
+  </div>
+  <div class="sw-chart-box sw-chart-scatter-box">
+    <div class="sw-chart-label">Ma trận Rủi ro (EPSS × Mức độ)</div>
+    <svg id="sw-scatter-svg" width="220" height="90" viewBox="0 0 220 90"></svg>
+  </div>
+</div>
 <div style="overflow-x:auto;">
 <table class="sw-asset-table">
   <thead><tr>
@@ -82230,6 +82382,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <tbody>${rows}</tbody>
 </table>
 </div>`;
+            swRenderMiniCharts(swState.alerts);
         }
 
         // Events
@@ -82288,6 +82441,71 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 </tr>`;
     }
 
+    function swRenderMiniCharts(alerts) {
+        const container = document.getElementById('sw-charts-row');
+        if (!container) return;
+        if (!alerts || alerts.length === 0) { container.style.display = 'none'; return; }
+        container.style.display = 'flex';
+        const sevCount = {CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0, UNKNOWN:0};
+        for (const a of alerts) { const k = a.severity || 'UNKNOWN'; sevCount[k] = (sevCount[k]||0) + 1; }
+        const sevColors = {CRITICAL:'#dc2626', HIGH:'#ea580c', MEDIUM:'#d97706', LOW:'#2563eb', UNKNOWN:'#6b7280'};
+        const sevOrder = ['CRITICAL','HIGH','MEDIUM','LOW','UNKNOWN'];
+        const total = alerts.length;
+        const canvas = document.getElementById('sw-donut-canvas');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const cx = 70, cy = 70, r = 52, ri = 34;
+            ctx.clearRect(0, 0, 140, 140);
+            let startAngle = -Math.PI / 2;
+            for (const sev of sevOrder) {
+                const count = sevCount[sev] || 0;
+                if (!count) continue;
+                const slice = (count / total) * 2 * Math.PI;
+                ctx.beginPath(); ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, r, startAngle, startAngle + slice);
+                ctx.closePath(); ctx.fillStyle = sevColors[sev]; ctx.fill();
+                startAngle += slice;
+            }
+            ctx.beginPath(); ctx.arc(cx, cy, ri, 0, 2*Math.PI);
+            ctx.fillStyle = 'rgba(10,14,23,0.95)'; ctx.fill();
+            ctx.fillStyle = '#f8fafc'; ctx.font = 'bold 18px Inter, sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText(total, cx, cy + 6);
+            ctx.fillStyle = '#94a3b8'; ctx.font = '10px Inter, sans-serif';
+            ctx.fillText('CVEs', cx, cy + 20);
+        }
+        const scatterEl = document.getElementById('sw-scatter-svg');
+        if (scatterEl) {
+            const W = 220, H = 90, PAD = 24;
+            const sevY = {CRITICAL: PAD, HIGH: PAD + (H-PAD*2)*0.33, MEDIUM: PAD + (H-PAD*2)*0.66, LOW: H-PAD, UNKNOWN: H-PAD};
+            let dots = '';
+            for (const a of alerts) {
+                const epss = parseFloat(a.epss) || 0;
+                const x = PAD + epss * (W - PAD*2);
+                const y = sevY[a.severity] || H - PAD;
+                const color = sevColors[a.severity] || sevColors.UNKNOWN;
+                dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${color}" opacity="0.8"><title>${escapeHtml(a.cve_id||'')} (EPSS ${(epss*100).toFixed(1)}%)</title></circle>`;
+            }
+            scatterEl.innerHTML = `
+                <line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H-PAD}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+                <line x1="${PAD}" y1="${H-PAD}" x2="${W-PAD}" y2="${H-PAD}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+                <text x="${PAD-2}" y="${sevY.CRITICAL+4}" fill="#94a3b8" font-size="8" text-anchor="end">CRIT</text>
+                <text x="${PAD-2}" y="${sevY.HIGH+4}" fill="#94a3b8" font-size="8" text-anchor="end">HIGH</text>
+                <text x="${PAD-2}" y="${sevY.MEDIUM+4}" fill="#94a3b8" font-size="8" text-anchor="end">MED</text>
+                <text x="${PAD-2}" y="${sevY.LOW+4}" fill="#94a3b8" font-size="8" text-anchor="end">LOW</text>
+                <text x="${PAD}" y="${H-PAD+12}" fill="#94a3b8" font-size="8">0%</text>
+                <text x="${W-PAD-10}" y="${H-PAD+12}" fill="#94a3b8" font-size="8">100%</text>
+                <text x="${PAD + (W-PAD*2)/2}" y="${H-PAD+12}" fill="#94a3b8" font-size="8" text-anchor="middle">EPSS →</text>
+                ${dots}
+            `;
+        }
+        const legendEl = document.getElementById('sw-chart-legend');
+        if (legendEl) {
+            legendEl.innerHTML = sevOrder.filter(s => sevCount[s]).map(s =>
+                `<span class="sw-chart-legend-item"><span class="sw-chart-legend-dot" style="background:${sevColors[s]}"></span>${s} (${sevCount[s]})</span>`
+            ).join('');
+        }
+    }
+
     function swRenderAlerts(el) {
         const alertStatusLabels = { '': 'Tất cả', 'new': 'Mới', 'acknowledged': 'Đã xem' };
         const selectedAsset = swState.selectedAsset
@@ -82308,7 +82526,13 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <option value="LOW" ${swState.severityFilter === 'LOW' ? 'selected' : ''}>LOW</option>
   </select>
   <div class="sw-toolbar-sep"></div>
-  <span class="sw-count-badge">${escapeHtml(String(swState.alerts.length))} cảnh báo</span>
+  <span class="sw-count-badge">${escapeHtml(String(swState.alertTotal || swState.alerts.length))} cảnh báo</span>
+  ${swState.alertTotal > swState.alertPerPage ? `
+  <div class="sw-pagination">
+    <button class="sw-btn sw-pg-prev" ${swState.alertPage <= 1 ? 'disabled' : ''} title="Trang trước"><i class="fa-solid fa-chevron-left"></i></button>
+    <span class="sw-pg-info">Trang ${swState.alertPage}/${Math.ceil(swState.alertTotal/swState.alertPerPage)}</span>
+    <button class="sw-btn sw-pg-next" ${swState.alertPage >= Math.ceil(swState.alertTotal/swState.alertPerPage) ? 'disabled' : ''} title="Trang sau"><i class="fa-solid fa-chevron-right"></i></button>
+  </div>` : ''}
   <button id="sw-export-alerts" class="sw-btn" title="Xuất báo cáo CVE ra CSV">
     <i class="fa-solid fa-file-csv"></i> Xuất báo cáo CVE
   </button>
@@ -82413,14 +82637,23 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         });
         el.querySelector('#sw-alert-status')?.addEventListener('change', e => {
             swState.alertFilter = e.target.value;
+            swState.alertPage = 1;
             swLoadAndRender();
         });
         el.querySelector('#sw-sev-filter')?.addEventListener('change', e => {
             swState.severityFilter = e.target.value;
+            swState.alertPage = 1;
             swLoadAndRender();
         });
         el.querySelector('#sw-export-alerts')?.addEventListener('click', () => swShowExportModal());
         el.querySelector('#sw-ack-all')?.addEventListener('click', () => swAckAll());
+        el.querySelector('.sw-pg-prev')?.addEventListener('click', () => {
+            if (swState.alertPage > 1) { swState.alertPage--; swLoadAndRender(); }
+        });
+        el.querySelector('.sw-pg-next')?.addEventListener('click', () => {
+            const total = Math.ceil(swState.alertTotal / swState.alertPerPage);
+            if (swState.alertPage < total) { swState.alertPage++; swLoadAndRender(); }
+        });
         el.querySelectorAll('.sw-sort-th').forEach(th => th.addEventListener('click', () => {
             const col = th.dataset.col;
             if (swState.alertSortBy === col) {
@@ -82574,14 +82807,27 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     }
 
     async function swAckAll() {
+        // Optimistic update: cập nhật UI ngay
+        swState.alerts.forEach(a => { if (a.status === 'new') a.status = 'acknowledged'; });
+        const el = document.getElementById('sw-content');
+        if (el) swRenderAlerts(el);
+        // Gọi API background
         try {
             await fetch(`${SW_API}/alerts/ack`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ asset_id: swState.selectedAsset || null }),
             });
+            // Refresh summary counts, không reload alerts
+            if (typeof swFetchSummary === 'function') {
+                await swFetchSummary();
+                const sel = document.getElementById('sw-content');
+                if (sel) swRenderSummary(sel);
+            }
+        } catch (e) {
+            console.error(e);
             await swLoadAndRender();
-        } catch (e) { console.error(e); }
+        }
     }
 
     async function swDeleteAlert(alertId) {
@@ -82970,6 +83216,116 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     }
 
     // ── Entry point ───────────────────────────────────────────────────────
+
+    // ═══ VT LiveHunt ═══════════════════════════════════════════════════════
+    let vtHuntState = { tab: 'rulesets', rulesets: [], notifications: [], initialized: false };
+
+    async function vtLivehuntOpen() {
+        const pane = document.getElementById('vt-livehunt-pane');
+        if (!pane) return;
+        if (!vtHuntState.initialized) {
+            vtHuntState.initialized = true;
+            pane.querySelectorAll('[data-vt-tab]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    vtHuntState.tab = btn.dataset.vtTab;
+                    pane.querySelectorAll('[data-vt-tab]').forEach(b => b.classList.toggle('active', b === btn));
+                    vtHuntLoad();
+                });
+            });
+        }
+        await vtHuntLoad();
+    }
+
+    async function vtHuntLoad() {
+        const el = document.getElementById('vt-hunt-content');
+        if (!el) return;
+        el.innerHTML = '<div style="padding:20px;color:var(--text-muted);">Đang tải...</div>';
+        if (vtHuntState.tab === 'rulesets') {
+            try {
+                const r = await fetch('/api/vt/hunting/rulesets');
+                if (r.ok) { const d = await r.json(); vtHuntState.rulesets = d.rulesets || d.data || (Array.isArray(d) ? d : []); }
+                else { vtHuntState.rulesets = []; }
+            } catch(e) { vtHuntState.rulesets = []; }
+        } else {
+            try {
+                const r = await fetch('/api/vt/hunting/notifications');
+                if (r.ok) { const d = await r.json(); vtHuntState.notifications = d.notifications || d.data || (Array.isArray(d) ? d : []); }
+                else { vtHuntState.notifications = []; }
+            } catch(e) { vtHuntState.notifications = []; }
+        }
+        vtHuntRender();
+    }
+
+    function vtHuntRender() {
+        const el = document.getElementById('vt-hunt-content');
+        if (!el) return;
+        if (vtHuntState.tab === 'rulesets') vtHuntRenderRulesets(el);
+        else vtHuntRenderNotifications(el);
+    }
+
+    function vtHuntRenderRulesets(el) {
+        const rulesets = vtHuntState.rulesets;
+        if (!Array.isArray(rulesets) || rulesets.length === 0) {
+            el.innerHTML = `<div style="color:var(--text-muted);padding:30px;text-align:center;">
+                <i class="fa-solid fa-code" style="font-size:2rem;margin-bottom:10px;display:block;opacity:0.4;"></i>
+                <div>Chưa có YARA ruleset nào.</div>
+                <div style="margin-top:8px;font-size:0.8rem;">Cần API Key VirusTotal trong <strong>Cài đặt API</strong>. <a href="https://www.virustotal.com/gui/hunting-overview" target="_blank" rel="noopener" style="color:var(--accent);">Tạo ruleset trên VirusTotal ↗</a></div>
+            </div>`;
+            return;
+        }
+        el.innerHTML = `<table class="sw-asset-table" style="width:100%;">
+            <thead><tr><th>Tên Ruleset</th><th>Luật</th><th>Trạng thái</th><th>Cập nhật</th><th>Hành động</th></tr></thead>
+            <tbody>${rulesets.map(rs => {
+                const id = escapeHtml(rs.id || rs.ruleset_id || '');
+                const name = escapeHtml(rs.name || (rs.attributes && rs.attributes.name) || 'N/A');
+                const ruleCount = rs.rules_count || (rs.attributes && rs.attributes.rules_count) || 0;
+                const enabled = rs.enabled !== false && !(rs.attributes && rs.attributes.enabled === false);
+                const updated = rs.modification_date || (rs.attributes && rs.attributes.modification_date) || '';
+                const updStr = updated ? new Date(typeof updated === 'number' ? updated*1000 : updated).toLocaleDateString('vi-VN') : '—';
+                return `<tr>
+                    <td><span style="font-family:monospace;font-size:0.82rem;color:var(--accent);">${name}</span></td>
+                    <td>${ruleCount}</td>
+                    <td><span class="sw-lib-status ${enabled ? 'sw-status-approved' : 'sw-status-blocked'}">${enabled ? 'Bật' : 'Tắt'}</span></td>
+                    <td style="color:var(--text-muted);font-size:0.78rem;">${updStr}</td>
+                    <td><a href="https://www.virustotal.com/gui/hunting-ruleset/${id}" target="_blank" rel="noopener" class="sw-btn" style="font-size:0.75rem;padding:3px 8px;text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Mở VT</a></td>
+                </tr>`;
+            }).join('')}</tbody>
+        </table>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Dữ liệu từ VirusTotal API. Cần API Key VT trong Cài đặt.</div>`;
+    }
+
+    function vtHuntRenderNotifications(el) {
+        const hits = vtHuntState.notifications;
+        if (!Array.isArray(hits) || hits.length === 0) {
+            el.innerHTML = `<div style="color:var(--text-muted);padding:30px;text-align:center;">
+                <i class="fa-solid fa-bell-slash" style="font-size:2rem;margin-bottom:10px;display:block;opacity:0.4;"></i>
+                Chưa có hits nào từ LiveHunt rules
+            </div>`;
+            return;
+        }
+        el.innerHTML = `<table class="sw-asset-table" style="width:100%;">
+            <thead><tr><th>File Hash</th><th>Ruleset</th><th>Rule</th><th>Phát hiện</th><th>Hành động</th></tr></thead>
+            <tbody>${hits.slice(0, 50).map(hit => {
+                const fileHash = escapeHtml(hit.id || hit.file_hash || (hit.attributes && hit.attributes.sha256) || '');
+                const rulesetName = escapeHtml(hit.ruleset_name || (hit.attributes && hit.attributes.ruleset_name) || '—');
+                const ruleName = escapeHtml(hit.rule_name || (hit.attributes && hit.attributes.rule_name) || '—');
+                const dateStr = hit.date || (hit.attributes && hit.attributes.date) || '';
+                const dateDisp = dateStr ? new Date(typeof dateStr === 'number' ? dateStr*1000 : dateStr).toLocaleDateString('vi-VN') : '—';
+                const rawHash = hit.id || hit.file_hash || (hit.attributes && hit.attributes.sha256) || '';
+                return `<tr>
+                    <td><code style="font-size:0.72rem;color:var(--accent);">${fileHash.substring(0,16)}…</code></td>
+                    <td style="font-size:0.8rem;">${rulesetName}</td>
+                    <td style="font-size:0.8rem;">${ruleName}</td>
+                    <td style="color:var(--text-muted);font-size:0.78rem;">${dateDisp}</td>
+                    <td style="display:flex;gap:4px;">
+                        <a href="https://www.virustotal.com/gui/file/${escapeHtml(rawHash)}" target="_blank" rel="noopener" class="sw-btn" style="font-size:0.72rem;padding:2px 6px;text-decoration:none;" title="Xem trên VT"><i class="fa-solid fa-magnifying-glass"></i></a>
+                        <button class="sw-btn sw-btn-primary" style="font-size:0.72rem;padding:2px 6px;" title="Gửi sang IOC Search" onclick="(function(){document.querySelector('[data-tab=ioc-search]')?.click();setTimeout(()=>{const inp=document.getElementById('ioc-search-input');if(inp){inp.value=${JSON.stringify(rawHash)};inp.dispatchEvent(new Event('input'));}},300);})()"><i class="fa-solid fa-share"></i></button>
+                    </td>
+                </tr>`;
+            }).join('')}</tbody>
+        </table>`;
+    }
+    // ═══ End VT LiveHunt ═══════════════════════════════════════════════════
 
     async function swWatchOpen() {
         const pane = document.getElementById('software-watch-pane');

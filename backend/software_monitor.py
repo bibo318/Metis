@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS sw_alerts (
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_asset ON sw_alerts(asset_id);
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_status ON sw_alerts(status);
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_cve ON sw_alerts(cve_id);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_severity ON sw_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_asset_status ON sw_alerts(asset_id, status);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_sort ON sw_alerts(is_kev DESC, epss DESC, created_at DESC);
 CREATE TABLE IF NOT EXISTS sw_libraries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     system_name     TEXT NOT NULL DEFAULT '',
@@ -64,6 +67,10 @@ CREATE TABLE IF NOT EXISTS sw_libraries (
 );
 CREATE INDEX IF NOT EXISTS idx_sw_libs_system ON sw_libraries(system_name);
 CREATE INDEX IF NOT EXISTS idx_sw_libs_status ON sw_libraries(status);
+CREATE TABLE IF NOT EXISTS sw_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS sw_version_cache (
     cve_id      TEXT PRIMARY KEY,
     affected_v  TEXT DEFAULT '',
@@ -120,6 +127,73 @@ def init_db():
                 pass
     finally:
         conn.close()
+
+
+# ── Settings & Webhook ────────────────────────────────────────────────────────
+
+def get_setting(key: str, default: str = "") -> str:
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM sw_settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+    finally:
+        conn.close()
+
+
+def save_setting(key: str, value: str) -> None:
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute("INSERT OR REPLACE INTO sw_settings (key, value) VALUES (?,?)", (key, value))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def notify_webhook(cve_id: str, software_name: str, environment: str, severity: str,
+                   is_kev: bool, epss: float, fixed_version: str = "") -> None:
+    url = get_setting("webhook_url", "")
+    enabled = get_setting("webhook_enabled", "1")
+    if not url or enabled != "1":
+        return
+    payload = {
+        "title": f"\U0001f534 CVE Mới: {cve_id}",
+        "message": (
+            f"{severity} • {software_name} ({environment}) • EPSS: {epss*100:.0f}%"
+            f"{' • KEV' if is_kev else ''}"
+            f"{(' • Fix: ' + fixed_version) if fixed_version else ''}"
+        ),
+        "cve": cve_id, "software": software_name, "environment": environment,
+        "severity": severity, "is_kev": is_kev, "epss": epss, "fixed_version": fixed_version,
+        "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+    }
+    headers = {"Content-Type": "application/json"}
+    if "ntfy.sh" in url:
+        headers["Title"] = f"CVE Mới: {cve_id}"
+        headers["Priority"] = "urgent" if severity == "CRITICAL" else "high"
+    try:
+        import ssl
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        ctx = None
+        try:
+            ctx = ssl.create_default_context()
+            cafile = "/root/.ccr/ca-bundle.crt"
+            if os.path.exists(cafile):
+                ctx.load_verify_locations(cafile)
+        except Exception:
+            ctx = None
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+            logger.info("Webhook sent for %s: %s", cve_id, resp.status)
+    except Exception as exc:
+        logger.warning("Webhook send failed for %s: %s", cve_id, exc)
+        try:
+            req2 = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            with urllib.request.urlopen(req2, timeout=5) as resp2:
+                logger.info("Webhook retry ok for %s: %s", cve_id, resp2.status)
+        except Exception as exc2:
+            logger.warning("Webhook retry failed: %s", exc2)
 
 
 # ── Assets ────────────────────────────────────────────────────────────────────
@@ -324,7 +398,7 @@ def export_csv() -> str:
 # ── Alerts ────────────────────────────────────────────────────────────────────
 
 def get_alerts(asset_id: Optional[int] = None, status: str = "",
-               severity: str = "", limit: int = 200) -> List[Dict]:
+               severity: str = "", page: int = 1, per_page: int = 100) -> Dict:
     init_db()
     conn = _connect()
     try:
@@ -340,14 +414,21 @@ def get_alerts(asset_id: Optional[int] = None, status: str = "",
             clauses.append("al.severity=?")
             params.append(severity.upper())
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        per_page = max(10, min(per_page, 500))
+        page = max(1, page)
+        offset = (page - 1) * per_page
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id {where}",
+            params
+        ).fetchone()[0]
         rows = conn.execute(
             f"SELECT al.*, a.software_name, a.vendor, a.version as asset_version, "
             f"a.system_name, a.environment "
             f"FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id "
-            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC LIMIT ?",
-            params + [limit]
+            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset]
         ).fetchall()
-        return [dict(r) for r in rows]
+        return {"alerts": [dict(r) for r in rows], "total": total, "page": page, "per_page": per_page}
     finally:
         conn.close()
 
@@ -660,16 +741,18 @@ def scan_asset(asset_id: int) -> Dict:
             poc_count = len(e.get("_allLinks") or [])
             published = str(e.get("kev_date_added") or e.get("published") or "")
 
-            affected_versions = ""
-            fixed_version = ""
-            if asset_version:
-                osv = _fetch_osv_version_info(cve)
-                affected_versions = osv.get("affected_versions", "")
-                fixed_version = osv.get("fixed_version", "")
-                if affected_versions and not _version_affected(asset_version, affected_versions):
+            # Fetch OSV cho TẤT CẢ CVE (không gate theo asset_version)
+            osv = _fetch_osv_version_info(cve)
+            affected_versions = osv.get("affected_versions", "")
+            fixed_version = osv.get("fixed_version", "")
+
+            # Chỉ filter version khi asset CÓ version VÀ OSV có affected range
+            if asset_version and affected_versions:
+                if not _version_affected(asset_version, affected_versions):
                     continue  # CVE không ảnh hưởng phiên bản đang dùng
 
-            sources_json = json.dumps(_build_sources(cve, e, bool(is_kev)), ensure_ascii=False)
+            sources = _build_sources(cve, e, bool(is_kev))
+            sources_json = json.dumps(sources, ensure_ascii=False)
 
             if fixed_version:
                 latest_fix_versions.append(fixed_version)
@@ -683,8 +766,28 @@ def scan_asset(asset_id: int) -> Dict:
                     (asset_id, cve, title, severity, epss, is_kev, poc_count, published, "pocindex/kev",
                      affected_versions, fixed_version, sources_json, now)
                 )
-                if conn.execute("SELECT changes()").fetchone()[0] > 0:
+                new_row = conn.execute("SELECT changes()").fetchone()[0] > 0
+                if new_row:
                     found += 1
+                    if severity in ("CRITICAL", "HIGH") and (is_kev or epss >= 0.5):
+                        try:
+                            notify_webhook(cve, sw_name, asset.get("environment", ""),
+                                           severity, bool(is_kev), epss, fixed_version)
+                        except Exception:
+                            pass
+                else:
+                    # Upsert: refresh fixed_version và sources khi có data tốt hơn
+                    has_better_sources = len(sources) > 1
+                    if fixed_version or has_better_sources:
+                        conn.execute(
+                            """UPDATE sw_alerts SET fixed_version=?, sources_json=?, affected_versions=?
+                               WHERE asset_id=? AND cve_id=? AND (
+                                   (fixed_version='' AND ?) OR
+                                   (sources_json='[]' OR sources_json LIKE '[{"name": "NVD"%') AND ?
+                               )""",
+                            (fixed_version, sources_json, affected_versions,
+                             asset_id, cve, bool(fixed_version), has_better_sources)
+                        )
             except sqlite3.IntegrityError:
                 pass
 
