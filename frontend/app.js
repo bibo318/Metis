@@ -82061,7 +82061,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         const critAlerts = sum.critical_alerts || 0;
 
         pane.innerHTML = `
-<div style="max-width:1100px; margin: 0 auto; padding: 20px 10px;">
+<div style="padding: 20px 4px;">
   <div class="sw-header">
     <div class="sw-header-info">
       <div class="sw-header-label">
@@ -82599,8 +82599,8 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <input type="file" id="sw-lib-import-file" accept=".csv,text/csv">
   </div>
   <div class="sw-btn-row">
-    <button id="sw-lib-import-cancel" class="btn-action" style="background:none;border-color:var(--border-color);">Hủy</button>
-    <button id="sw-lib-import-ok" class="btn-action" style="background:rgba(99,102,241,0.2);border-color:var(--accent);">Nhập</button>
+    <button id="sw-lib-import-cancel" class="sw-btn">Hủy</button>
+    <button id="sw-lib-import-ok" class="sw-btn sw-btn-primary">Nhập</button>
   </div>
 </div>`;
         document.body.appendChild(overlay);
@@ -82646,8 +82646,8 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   </select></div>
   <div class="sw-form-row"><label>Ghi chú</label><input id="sw-lf-notes" type="text" value="${escapeHtml(lib?.notes || '')}"></div>
   <div class="sw-btn-row">
-    <button id="sw-lib-cancel" class="btn-action" style="background:none;border-color:var(--border-color);">Hủy</button>
-    <button id="sw-lib-ok" class="btn-action" style="background:rgba(99,102,241,0.2);border-color:var(--accent);">${editId ? 'Lưu' : 'Thêm'}</button>
+    <button id="sw-lib-cancel" class="sw-btn">Hủy</button>
+    <button id="sw-lib-ok" class="sw-btn sw-btn-primary">${editId ? 'Lưu' : 'Thêm'}</button>
   </div>
 </div>`;
         document.body.appendChild(overlay);
@@ -82712,8 +82712,8 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <label for="sw-import-replace" style="display:inline;margin:0;color:var(--text-primary);">Xóa danh sách cũ trước khi nhập</label>
   </div>
   <div class="sw-btn-row">
-    <button id="sw-import-cancel" class="btn-action" style="background:none;border-color:var(--border-color);">Hủy</button>
-    <button id="sw-import-ok" class="btn-action" style="background:rgba(99,102,241,0.2);border-color:var(--accent);">Nhập</button>
+    <button id="sw-import-cancel" class="sw-btn">Hủy</button>
+    <button id="sw-import-ok" class="sw-btn sw-btn-primary">Nhập</button>
   </div>
 </div>`;
         document.body.appendChild(overlay);
@@ -82761,8 +82761,8 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   </select></div>
   <div class="sw-form-row"><label>Ghi chú</label><input id="sw-f-notes" type="text" value="${escapeHtml(asset?.notes || '')}"></div>
   <div class="sw-btn-row">
-    <button id="sw-add-cancel" class="btn-action" style="background:none;border-color:var(--border-color);">Hủy</button>
-    <button id="sw-add-ok" class="btn-action" style="background:rgba(99,102,241,0.2);border-color:var(--accent);">${editId ? 'Lưu' : 'Thêm'}</button>
+    <button id="sw-add-cancel" class="sw-btn">Hủy</button>
+    <button id="sw-add-ok" class="sw-btn sw-btn-primary">${editId ? 'Lưu' : 'Thêm'}</button>
   </div>
 </div>`;
         document.body.appendChild(overlay);
