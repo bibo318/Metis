@@ -1,0 +1,521 @@
+"""Theo dõi phần mềm - giám sát CVE/ATTT theo danh sách tài sản phần mềm."""
+import csv
+import io
+import json
+import logging
+import os
+import re
+import sqlite3
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("metis.software_watch")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "software_watch.db")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sw_assets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_name TEXT NOT NULL DEFAULT '',
+    environment TEXT NOT NULL DEFAULT '',
+    software_name TEXT NOT NULL DEFAULT '',
+    vendor      TEXT NOT NULL DEFAULT '',
+    version     TEXT NOT NULL DEFAULT '',
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    notes       TEXT DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sw_alerts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id    INTEGER NOT NULL,
+    cve_id      TEXT NOT NULL DEFAULT '',
+    title       TEXT DEFAULT '',
+    severity    TEXT DEFAULT '',
+    epss        REAL DEFAULT 0.0,
+    is_kev      INTEGER DEFAULT 0,
+    poc_count   INTEGER DEFAULT 0,
+    published   TEXT DEFAULT '',
+    source      TEXT DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'new',
+    created_at  TEXT NOT NULL DEFAULT '',
+    UNIQUE(asset_id, cve_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_asset ON sw_alerts(asset_id);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_status ON sw_alerts(status);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_cve ON sw_alerts(cve_id);
+"""
+
+CSV_COLUMNS = [
+    "Hệ thống thông tin thành phần",
+    "Môi trường",
+    "Tên phần mềm",
+    "Hãng cung cấp",
+    "Phiên bản prod",
+]
+CSV_COLUMNS_EN = [
+    "System Name",
+    "Environment",
+    "Software Name",
+    "Vendor",
+    "Version",
+]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _connect() -> sqlite3.Connection:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def init_db():
+    conn = _connect()
+    try:
+        conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+
+def get_assets(search: str = "", environment: str = "") -> List[Dict]:
+    init_db()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT a.*, "
+            "(SELECT COUNT(*) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as new_alerts,"
+            "(SELECT COUNT(*) FROM sw_alerts al WHERE al.asset_id=a.id) as total_alerts,"
+            "(SELECT MAX(al.severity) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as top_severity,"
+            "(SELECT MAX(al.is_kev) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as has_kev "
+            "FROM sw_assets a ORDER BY a.system_name, a.software_name"
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if search:
+                s = search.lower()
+                if not any(s in str(d.get(f) or "").lower() for f in
+                           ["system_name", "software_name", "vendor", "environment"]):
+                    continue
+            if environment:
+                if environment.lower() not in (d.get("environment") or "").lower():
+                    continue
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def add_asset(system_name: str, environment: str, software_name: str,
+              vendor: str, version: str, notes: str = "") -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        now = _now()
+        cur = conn.execute(
+            "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (system_name.strip(), environment.strip(), software_name.strip(),
+             vendor.strip(), version.strip(), notes.strip(), now, now)
+        )
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid}
+    finally:
+        conn.close()
+
+
+def update_asset(asset_id: int, **kwargs) -> Dict:
+    init_db()
+    conn = _connect()
+    allowed = {"system_name", "environment", "software_name", "vendor", "version", "notes", "enabled"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return {"ok": False, "reason": "Không có trường nào để cập nhật"}
+    fields["updated_at"] = _now()
+    sql = "UPDATE sw_assets SET " + ", ".join(f"{k}=?" for k in fields) + " WHERE id=?"
+    try:
+        cur = conn.execute(sql, list(fields.values()) + [asset_id])
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
+    finally:
+        conn.close()
+
+
+def delete_asset(asset_id: int) -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM sw_alerts WHERE asset_id=?", (asset_id,))
+        cur = conn.execute("DELETE FROM sw_assets WHERE id=?", (asset_id,))
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
+    finally:
+        conn.close()
+
+
+def import_csv(csv_text: str, replace: bool = False) -> Dict:
+    """Import danh sách phần mềm từ CSV (hỗ trợ cả tiếng Việt và tiếng Anh)."""
+    init_db()
+    reader = csv.DictReader(io.StringIO(csv_text.strip()))
+    headers = [h.strip() for h in (reader.fieldnames or [])]
+
+    # Map cột theo tiếng Việt hoặc tiếng Anh
+    col_map = {}
+    vi_map = {
+        "hệ thống thông tin thành phần": "system_name",
+        "môi trường": "environment",
+        "tên phần mềm": "software_name",
+        "hãng cung cấp": "vendor",
+        "phiên bản prod": "version",
+        "phiên bản": "version",
+        "ghi chú": "notes",
+    }
+    en_map = {
+        "system name": "system_name",
+        "environment": "environment",
+        "software name": "software_name",
+        "vendor": "vendor",
+        "version": "version",
+        "prod version": "version",
+        "notes": "notes",
+    }
+    for h in headers:
+        norm = h.lower().strip()
+        if norm in vi_map:
+            col_map[h] = vi_map[norm]
+        elif norm in en_map:
+            col_map[h] = en_map[norm]
+
+    if "software_name" not in col_map.values():
+        return {"ok": False, "reason": "Không tìm thấy cột 'Tên phần mềm' hoặc 'Software Name'"}
+
+    conn = _connect()
+    try:
+        if replace:
+            conn.execute("DELETE FROM sw_alerts")
+            conn.execute("DELETE FROM sw_assets")
+
+        added = skipped = 0
+        now = _now()
+        for row in reader:
+            mapped: Dict[str, str] = {}
+            for orig_col, field in col_map.items():
+                mapped[field] = str(row.get(orig_col) or "").strip()
+
+            sw = mapped.get("software_name", "").strip()
+            if not sw:
+                skipped += 1
+                continue
+
+            # Bỏ qua dòng trùng (cùng software_name + vendor + version)
+            vendor = mapped.get("vendor", "")
+            version = mapped.get("version", "")
+            existing = conn.execute(
+                "SELECT id FROM sw_assets WHERE software_name=? AND vendor=? AND version=?",
+                (sw, vendor, version)
+            ).fetchone()
+            if existing and not replace:
+                skipped += 1
+                continue
+
+            conn.execute(
+                "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, notes, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (mapped.get("system_name", ""), mapped.get("environment", ""),
+                 sw, vendor, version, mapped.get("notes", ""), now, now)
+            )
+            added += 1
+
+        conn.commit()
+        return {"ok": True, "added": added, "skipped": skipped}
+    except Exception as exc:
+        logger.error(f"CSV import error: {exc}")
+        return {"ok": False, "reason": str(exc)}
+    finally:
+        conn.close()
+
+
+def export_csv() -> str:
+    """Xuất danh sách phần mềm ra CSV."""
+    init_db()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT system_name, environment, software_name, vendor, version, notes FROM sw_assets ORDER BY system_name, software_name"
+        ).fetchall()
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(CSV_COLUMNS + ["Ghi chú"])
+        for r in rows:
+            writer.writerow([r["system_name"], r["environment"], r["software_name"],
+                             r["vendor"], r["version"], r["notes"] or ""])
+        return out.getvalue()
+    finally:
+        conn.close()
+
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+
+def get_alerts(asset_id: Optional[int] = None, status: str = "",
+               limit: int = 200) -> List[Dict]:
+    init_db()
+    conn = _connect()
+    try:
+        clauses = []
+        params: list = []
+        if asset_id is not None:
+            clauses.append("al.asset_id=?")
+            params.append(asset_id)
+        if status:
+            clauses.append("al.status=?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = conn.execute(
+            f"SELECT al.*, a.software_name, a.vendor, a.system_name, a.environment "
+            f"FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id "
+            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC LIMIT ?",
+            params + [limit]
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def ack_alert(alert_id: int) -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        cur = conn.execute("UPDATE sw_alerts SET status='acknowledged' WHERE id=?", (alert_id,))
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
+    finally:
+        conn.close()
+
+
+def ack_all_alerts(asset_id: Optional[int] = None) -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        if asset_id:
+            cur = conn.execute(
+                "UPDATE sw_alerts SET status='acknowledged' WHERE asset_id=? AND status='new'",
+                (asset_id,)
+            )
+        else:
+            cur = conn.execute("UPDATE sw_alerts SET status='acknowledged' WHERE status='new'")
+        conn.commit()
+        return {"ok": True, "updated": cur.rowcount}
+    finally:
+        conn.close()
+
+
+def delete_alert(alert_id: int) -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM sw_alerts WHERE id=?", (alert_id,))
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
+    finally:
+        conn.close()
+
+
+# ── CVE Scanning ──────────────────────────────────────────────────────────────
+
+def _normalize_name(name: str) -> str:
+    """Chuẩn hóa tên để so sánh: bỏ version, parens, lowercase."""
+    name = re.sub(r'\(.*?\)', '', name)
+    name = re.sub(r'v?\d+[\.\d]*\+?$', '', name)
+    return name.strip().lower()
+
+
+def _name_tokens(name: str) -> List[str]:
+    tokens = re.split(r'[\s/\-_]+', _normalize_name(name))
+    return [t for t in tokens if len(t) >= 2]
+
+
+def _matches_software(entry: Dict, sw_name: str, vendor: str) -> bool:
+    """Kiểm tra CVE entry có liên quan đến phần mềm/vendor không."""
+    sw_tokens = _name_tokens(sw_name)
+    vendor_tokens = _name_tokens(vendor) if vendor else []
+
+    # Collect text từ CVE entry
+    text_parts = [
+        entry.get("cve", ""),
+        str(entry.get("title") or ""),
+        str(entry.get("desc") or ""),
+        str(entry.get("kev_vulnerability_name") or ""),
+    ]
+    for f in ["vendor", "product"]:
+        v = entry.get(f)
+        if isinstance(v, list):
+            text_parts.extend(v)
+        elif v:
+            text_parts.append(str(v))
+
+    text = " ".join(text_parts).lower()
+
+    # Cần ít nhất 1 token của software_name match
+    sw_match = sum(1 for t in sw_tokens if t in text)
+    if sw_match == 0:
+        return False
+
+    # Nếu software name dài ≥ 2 tokens → cần match ít nhất 2
+    if len(sw_tokens) >= 2 and sw_match < 2:
+        # Fallback: check vendor match
+        if vendor_tokens:
+            vendor_match = sum(1 for t in vendor_tokens if t in text)
+            if vendor_match == 0:
+                return False
+        else:
+            return False
+
+    return True
+
+
+def scan_asset(asset_id: int) -> Dict:
+    """Quét CVE cho 1 asset, lưu alert nếu tìm thấy mới."""
+    try:
+        import pocindex_mod
+    except ImportError:
+        return {"ok": False, "reason": "pocindex_mod không khả dụng"}
+
+    init_db()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM sw_assets WHERE id=?", (asset_id,)).fetchone()
+        if not row:
+            return {"ok": False, "reason": "Asset không tồn tại"}
+        asset = dict(row)
+    finally:
+        conn.close()
+
+    sw_name = asset["software_name"]
+    vendor = asset["vendor"]
+
+    # Tạo query tìm kiếm
+    query_parts = []
+    if sw_name:
+        # Lấy phần chính của tên (bỏ "(K8s)" dạng alias)
+        clean = re.sub(r'\([^)]+\)', '', sw_name).strip()
+        query_parts.append(clean)
+    if vendor:
+        # Lấy tên đầu tiên (trước dấu /)
+        v = vendor.split("/")[0].strip()
+        if v and v.lower() not in ["inc", "ltd", "corp", "foundation", "project"]:
+            query_parts.append(v)
+
+    found = 0
+    all_entries = []
+
+    for q in query_parts[:2]:  # Tối đa 2 query
+        result = pocindex_mod.search_poc(q, limit=100)
+        for e in result.get("results") or []:
+            if _matches_software(e, sw_name, vendor):
+                all_entries.append(e)
+
+    # Dedup by CVE
+    seen_cves = set()
+    deduped = []
+    for e in all_entries:
+        cve = str(e.get("cve") or "").upper()
+        if cve and cve not in seen_cves:
+            seen_cves.add(cve)
+            deduped.append(e)
+
+    conn = _connect()
+    try:
+        now = _now()
+        for e in deduped:
+            cve = str(e.get("cve") or "").upper()
+            if not cve:
+                continue
+
+            # Lấy EPSS
+            epss_meta = (pocindex_mod.state.get("epss") or {}).get(cve) or []
+            epss = float(epss_meta[0]) if epss_meta else 0.0
+
+            is_kev = 1 if cve in (pocindex_mod.state.get("kev") or {}) else 0
+            severity = str(e.get("severity") or "")
+            title = str(e.get("title") or e.get("kev_vulnerability_name") or cve)
+            poc_count = len(e.get("_allLinks") or [])
+            published = str(e.get("kev_date_added") or e.get("published") or "")
+
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO sw_alerts "
+                    "(asset_id, cve_id, title, severity, epss, is_kev, poc_count, published, source, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)",
+                    (asset_id, cve, title, severity, epss, is_kev, poc_count, published, "pocindex/kev", now)
+                )
+                if conn.execute("SELECT changes()").fetchone()[0] > 0:
+                    found += 1
+            except sqlite3.IntegrityError:
+                pass  # Already exists
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"ok": True, "asset_id": asset_id, "new_alerts": found, "total_matched": len(deduped)}
+
+
+def scan_all() -> Dict:
+    """Quét tất cả assets đang enabled."""
+    init_db()
+    conn = _connect()
+    try:
+        assets = conn.execute("SELECT id FROM sw_assets WHERE enabled=1").fetchall()
+    finally:
+        conn.close()
+
+    total_new = 0
+    errors = []
+    for a in assets:
+        try:
+            res = scan_asset(a["id"])
+            total_new += res.get("new_alerts", 0)
+        except Exception as exc:
+            errors.append({"asset_id": a["id"], "error": str(exc)})
+
+    return {
+        "ok": True,
+        "scanned": len(assets),
+        "new_alerts": total_new,
+        "errors": errors,
+    }
+
+
+def get_summary() -> Dict:
+    """Thống kê tổng quan."""
+    init_db()
+    conn = _connect()
+    try:
+        total_assets = conn.execute("SELECT COUNT(*) FROM sw_assets WHERE enabled=1").fetchone()[0]
+        new_alerts = conn.execute("SELECT COUNT(*) FROM sw_alerts WHERE status='new'").fetchone()[0]
+        kev_alerts = conn.execute(
+            "SELECT COUNT(*) FROM sw_alerts WHERE status='new' AND is_kev=1"
+        ).fetchone()[0]
+        critical = conn.execute(
+            "SELECT COUNT(*) FROM sw_alerts WHERE status='new' AND severity IN ('CRITICAL','HIGH')"
+        ).fetchone()[0]
+        return {
+            "total_assets": total_assets,
+            "new_alerts": new_alerts,
+            "kev_alerts": kev_alerts,
+            "critical_alerts": critical,
+        }
+    finally:
+        conn.close()

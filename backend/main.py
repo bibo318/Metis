@@ -477,6 +477,128 @@ def feeds_status():
         pass
     return out
 
+# ── Software Watch API ────────────────────────────────────────────────────────
+
+import software_monitor as sw_mod
+
+class _SwAssetReq(BaseModel):
+    system_name: str = ""
+    environment: str = ""
+    software_name: str
+    vendor: str = ""
+    version: str = ""
+    notes: str = ""
+
+class _SwUpdateReq(BaseModel):
+    system_name: Optional[str] = None
+    environment: Optional[str] = None
+    software_name: Optional[str] = None
+    vendor: Optional[str] = None
+    version: Optional[str] = None
+    notes: Optional[str] = None
+    enabled: Optional[int] = None
+
+class _SwToggleReq(BaseModel):
+    id: int
+    enabled: bool
+
+class _SwAckReq(BaseModel):
+    alert_id: Optional[int] = None
+    asset_id: Optional[int] = None
+
+@app.get("/api/software-watch/assets")
+def sw_get_assets(search: str = "", environment: str = ""):
+    try:
+        return {"assets": sw_mod.get_assets(search=search, environment=environment)}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/assets")
+def sw_add_asset(req: _SwAssetReq):
+    try:
+        return sw_mod.add_asset(
+            req.system_name, req.environment, req.software_name,
+            req.vendor, req.version, req.notes
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.put("/api/software-watch/assets/{asset_id}")
+def sw_update_asset(asset_id: int, req: _SwUpdateReq):
+    try:
+        kwargs = {k: v for k, v in req.dict().items() if v is not None}
+        return sw_mod.update_asset(asset_id, **kwargs)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.delete("/api/software-watch/assets/{asset_id}")
+def sw_delete_asset(asset_id: int):
+    try:
+        return sw_mod.delete_asset(asset_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/import")
+async def sw_import_csv(file: UploadFile = File(...), replace: bool = False):
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig", errors="replace")
+        return sw_mod.import_csv(text, replace=replace)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/export")
+def sw_export_csv():
+    try:
+        csv_text = sw_mod.export_csv()
+        from fastapi.responses import Response
+        return Response(
+            content=csv_text.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=software_watch.csv"}
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/alerts")
+def sw_get_alerts(asset_id: Optional[int] = None, status: str = "", limit: int = 200):
+    try:
+        return {"alerts": sw_mod.get_alerts(asset_id=asset_id, status=status, limit=limit)}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/alerts/ack")
+def sw_ack_alert(req: _SwAckReq):
+    try:
+        if req.alert_id is not None:
+            return sw_mod.ack_alert(req.alert_id)
+        return sw_mod.ack_all_alerts(asset_id=req.asset_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.delete("/api/software-watch/alerts/{alert_id}")
+def sw_delete_alert(alert_id: int):
+    try:
+        return sw_mod.delete_alert(alert_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/scan")
+def sw_scan(asset_id: Optional[int] = None):
+    try:
+        if asset_id is not None:
+            return sw_mod.scan_asset(asset_id)
+        return sw_mod.scan_all()
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/summary")
+def sw_summary():
+    try:
+        return sw_mod.get_summary()
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
 # Deployment mode note: this deployment mode stores API credentials in the
 # browser (localStorage). Use only on trusted/local deployments.
 # CORS is configurable via environment variables; a wildcard default is only

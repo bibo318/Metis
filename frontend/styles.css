@@ -10696,3 +10696,185 @@ i.spinner {
 
 
 
+
+/* ── Software Watch ─────────────────────────────────────────────────────── */
+.sw-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.sw-toolbar input[type=text] {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    min-width: 180px;
+}
+.sw-toolbar select {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+}
+.sw-stat-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+}
+.sw-stat-card {
+    flex: 1;
+    min-width: 120px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+}
+.sw-stat-card .sw-stat-num {
+    font-size: 1.8rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+.sw-stat-card .sw-stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+.sw-stat-card.danger .sw-stat-num { color: #dc2626; }
+.sw-stat-card.warning .sw-stat-num { color: #ea580c; }
+.sw-stat-card.ok .sw-stat-num { color: #16a34a; }
+.sw-asset-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.sw-asset-table th {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    text-align: left;
+    padding: 8px 10px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+.sw-asset-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+}
+.sw-asset-table tr:hover td {
+    background: var(--bg-secondary);
+    cursor: pointer;
+}
+.sw-alert-row {
+    background: rgba(220,38,38,0.05);
+}
+.sw-sev-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #fff;
+}
+.sw-sev-critical { background: #7f1d1d; }
+.sw-sev-high     { background: #dc2626; }
+.sw-sev-medium   { background: #ea580c; }
+.sw-sev-low      { background: #2563eb; }
+.sw-sev-unknown  { background: #6b7280; }
+.sw-kev-tag {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: #7f1d1d;
+    color: #fca5a5;
+    border: 1px solid #dc2626;
+    margin-left: 4px;
+}
+.sw-new-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #dc2626;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.sw-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 14px;
+}
+.sw-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    padding: 7px 14px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all .15s;
+}
+.sw-tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+.sw-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 40px 0;
+    font-size: 0.9rem;
+}
+.sw-modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+}
+.sw-modal {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+    min-width: 360px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+.sw-modal h3 {
+    margin: 0 0 16px;
+    font-size: 1rem;
+}
+.sw-form-row {
+    margin-bottom: 10px;
+}
+.sw-form-row label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 3px;
+}
+.sw-form-row input, .sw-form-row select, .sw-form-row textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.85rem;
+}
+.sw-btn-row {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
+}
