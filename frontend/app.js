@@ -82062,27 +82062,25 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 
         pane.innerHTML = `
 <div style="max-width:1100px; margin: 0 auto; padding: 20px 10px;">
-  <div style="display:flex; align-items:center; gap:12px; margin-bottom:18px; flex-wrap:wrap;">
-    <div>
-      <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">
+  <div class="sw-header">
+    <div class="sw-header-info">
+      <div class="sw-header-label">
         <i class="fa-solid fa-shield-halved" style="color:var(--accent); margin-right:6px;"></i>Giám sát ATTT
       </div>
-      <h1 style="margin:0; font-size:1.4rem; font-weight:700;">Theo dõi Phần mềm</h1>
-      <p style="margin:4px 0 0; font-size:0.82rem; color:var(--text-secondary);">
-        Nhập danh sách phần mềm, tự động quét CVE/KEV và cảnh báo khi có lỗ hổng mới.
-      </p>
+      <h1 class="sw-header-title">Theo dõi Phần mềm</h1>
+      <p class="sw-header-desc">Nhập danh sách phần mềm, tự động quét CVE/KEV và cảnh báo khi có lỗ hổng mới.</p>
     </div>
-    <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
-      <button id="sw-btn-scan-all" class="btn-action" title="Quét toàn bộ CVE">
+    <div class="sw-header-actions">
+      <button id="sw-btn-scan-all" class="sw-btn sw-btn-scan" title="Quét toàn bộ CVE">
         <i class="fa-solid fa-magnifying-glass-chart"></i> Quét CVE
       </button>
-      <button id="sw-btn-import" class="btn-action">
+      <button id="sw-btn-import" class="sw-btn">
         <i class="fa-solid fa-file-import"></i> Nhập CSV
       </button>
-      <button id="sw-btn-export" class="btn-action">
+      <button id="sw-btn-export" class="sw-btn">
         <i class="fa-solid fa-file-export"></i> Xuất CSV
       </button>
-      <button id="sw-btn-add" class="btn-action" style="background:rgba(99,102,241,0.15); border-color:var(--accent);">
+      <button id="sw-btn-add" class="sw-btn sw-btn-primary">
         <i class="fa-solid fa-plus"></i> Thêm mới
       </button>
     </div>
@@ -82090,20 +82088,32 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 
   <div class="sw-stat-row">
     <div class="sw-stat-card ok">
-      <div class="sw-stat-num">${escapeHtml(String(totalAssets))}</div>
-      <div class="sw-stat-label">Phần mềm đang theo dõi</div>
+      <div class="sw-stat-icon"><i class="fa-solid fa-layer-group"></i></div>
+      <div class="sw-stat-body">
+        <div class="sw-stat-num">${escapeHtml(String(totalAssets))}</div>
+        <div class="sw-stat-label">Phần mềm theo dõi</div>
+      </div>
     </div>
     <div class="sw-stat-card ${newAlerts > 0 ? 'danger' : 'ok'}">
-      <div class="sw-stat-num">${escapeHtml(String(newAlerts))}</div>
-      <div class="sw-stat-label">Cảnh báo mới</div>
+      <div class="sw-stat-icon"><i class="fa-solid fa-bell"></i></div>
+      <div class="sw-stat-body">
+        <div class="sw-stat-num">${escapeHtml(String(newAlerts))}</div>
+        <div class="sw-stat-label">Cảnh báo mới</div>
+      </div>
     </div>
     <div class="sw-stat-card ${kevAlerts > 0 ? 'danger' : 'ok'}">
-      <div class="sw-stat-num">${escapeHtml(String(kevAlerts))}</div>
-      <div class="sw-stat-label">Trong KEV</div>
+      <div class="sw-stat-icon"><i class="fa-solid fa-skull-crossbones"></i></div>
+      <div class="sw-stat-body">
+        <div class="sw-stat-num">${escapeHtml(String(kevAlerts))}</div>
+        <div class="sw-stat-label">Trong KEV</div>
+      </div>
     </div>
     <div class="sw-stat-card ${critAlerts > 0 ? 'warning' : 'ok'}">
-      <div class="sw-stat-num">${escapeHtml(String(critAlerts))}</div>
-      <div class="sw-stat-label">Critical / High</div>
+      <div class="sw-stat-icon"><i class="fa-solid fa-fire"></i></div>
+      <div class="sw-stat-body">
+        <div class="sw-stat-num">${escapeHtml(String(critAlerts))}</div>
+        <div class="sw-stat-label">Critical / High</div>
+      </div>
     </div>
   </div>
 
@@ -82172,11 +82182,12 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <option value="Staging" ${swState.envFilter === 'Staging' ? 'selected' : ''}>Staging</option>
     <option value="Development" ${swState.envFilter === 'Development' ? 'selected' : ''}>Development</option>
   </select>
-  <button id="sw-toggle-group" style="background:${swState.groupBySystem ? 'rgba(99,102,241,0.2)' : 'none'};border:1px solid ${swState.groupBySystem ? 'var(--accent)' : 'var(--border-color)'};color:${swState.groupBySystem ? 'var(--accent)' : 'var(--text-secondary)'};border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;" title="Nhóm theo hệ thống">
+  <button id="sw-toggle-group" class="sw-btn ${swState.groupBySystem ? 'sw-btn-active' : ''}" title="Nhóm theo hệ thống">
     <i class="fa-solid fa-layer-group"></i> Nhóm hệ thống
   </button>
-  <span style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(String(swState.assets.length))} phần mềm</span>
-  ${lastScanText ? `<span style="font-size:0.75rem;color:var(--text-secondary);margin-left:auto;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${escapeHtml(lastScanText)}</span>` : ''}
+  <div class="sw-toolbar-sep"></div>
+  <span class="sw-count-badge">${escapeHtml(String(swState.assets.length))} phần mềm</span>
+  ${lastScanText ? `<span class="sw-last-scan"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${escapeHtml(lastScanText)}</span>` : ''}
 </div>`;
 
         if (swState.assets.length === 0) {
@@ -82265,9 +82276,9 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <td>${escapeHtml(a.environment || '—')}</td>
   <td>${newCount > 0 ? `<span class="sw-sev-badge ${swSevClass(topSev)}" style="margin-right:4px;">${escapeHtml(String(newCount))} mới</span>` : '<span style="color:var(--text-secondary);font-size:0.8rem;">Không có</span>'}</td>
   <td style="white-space:nowrap;">
-    <button class="sw-btn-scan" data-id="${escapeHtml(String(a.id))}" title="Quét CVE" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-magnifying-glass"></i></button>
-    <button class="sw-btn-edit" data-id="${escapeHtml(String(a.id))}" title="Sửa" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-pen"></i></button>
-    <button class="sw-btn-del" data-id="${escapeHtml(String(a.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-trash"></i></button>
+    <button class="sw-btn-scan" data-id="${escapeHtml(String(a.id))}" title="Quét CVE" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 8px;font-size:0.85rem;"><i class="fa-solid fa-magnifying-glass"></i></button>
+    <button class="sw-btn-edit" data-id="${escapeHtml(String(a.id))}" title="Sửa" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:3px 8px;font-size:0.85rem;"><i class="fa-solid fa-pen"></i></button>
+    <button class="sw-btn-del" data-id="${escapeHtml(String(a.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 8px;font-size:0.85rem;"><i class="fa-solid fa-trash"></i></button>
   </td>
 </tr>`;
     }
@@ -82280,7 +82291,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 
         const toolbar = `
 <div class="sw-toolbar">
-  ${selectedAsset ? `<button id="sw-clear-asset" style="background:rgba(99,102,241,0.12);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;"><i class="fa-solid fa-xmark"></i> ${escapeHtml(selectedAsset.software_name)}</button>` : ''}
+  ${selectedAsset ? `<button id="sw-clear-asset" class="sw-btn sw-btn-active"><i class="fa-solid fa-xmark"></i> ${escapeHtml(selectedAsset.software_name)}</button>` : ''}
   <select id="sw-alert-status">
     ${Object.entries(alertStatusLabels).map(([v, l]) => `<option value="${escapeHtml(v)}" ${swState.alertFilter === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
   </select>
@@ -82291,11 +82302,12 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <option value="MEDIUM" ${swState.severityFilter === 'MEDIUM' ? 'selected' : ''}>MEDIUM</option>
     <option value="LOW" ${swState.severityFilter === 'LOW' ? 'selected' : ''}>LOW</option>
   </select>
-  <span style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(String(swState.alerts.length))} cảnh báo</span>
-  <button id="sw-export-alerts" style="background:none;border:1px solid var(--border-color);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;margin-left:auto;" title="Xuất báo cáo CVE ra CSV">
+  <div class="sw-toolbar-sep"></div>
+  <span class="sw-count-badge">${escapeHtml(String(swState.alerts.length))} cảnh báo</span>
+  <button id="sw-export-alerts" class="sw-btn" title="Xuất báo cáo CVE ra CSV">
     <i class="fa-solid fa-file-csv"></i> Xuất báo cáo CVE
   </button>
-  ${swState.alerts.some(a => a.status === 'new') ? `<button id="sw-ack-all" style="background:rgba(99,102,241,0.12);border:1px solid var(--border-color);color:var(--text-primary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;"><i class="fa-solid fa-check-double"></i> Đánh dấu tất cả đã xem</button>` : ''}
+  ${swState.alerts.some(a => a.status === 'new') ? `<button id="sw-ack-all" class="sw-btn sw-btn-primary"><i class="fa-solid fa-check-double"></i> Đánh dấu đã xem</button>` : ''}
 </div>`;
 
         if (swState.alerts.length === 0) {
@@ -82361,14 +82373,15 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <select id="sw-lib-status">
     ${Object.entries(statusOptions).map(([v, l]) => `<option value="${escapeHtml(v)}" ${swState.libStatusFilter === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
   </select>
-  <span style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(String(swState.libraries.length))} thư viện</span>
-  <button id="sw-lib-import" style="background:none;border:1px solid var(--border-color);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;margin-left:auto;">
+  <div class="sw-toolbar-sep"></div>
+  <span class="sw-count-badge">${escapeHtml(String(swState.libraries.length))} thư viện</span>
+  <button id="sw-lib-import" class="sw-btn">
     <i class="fa-solid fa-file-import"></i> Nhập CSV
   </button>
-  <button id="sw-lib-export" style="background:none;border:1px solid var(--border-color);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;">
+  <button id="sw-lib-export" class="sw-btn">
     <i class="fa-solid fa-file-export"></i> Xuất CSV
   </button>
-  <button id="sw-lib-add" style="background:rgba(99,102,241,0.15);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;">
+  <button id="sw-lib-add" class="sw-btn sw-btn-primary">
     <i class="fa-solid fa-plus"></i> Thêm mới
   </button>
 </div>`;
