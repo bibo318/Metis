@@ -341,7 +341,8 @@ def get_alerts(asset_id: Optional[int] = None, status: str = "",
             params.append(severity.upper())
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = conn.execute(
-            f"SELECT al.*, a.software_name, a.vendor, a.system_name, a.environment "
+            f"SELECT al.*, a.software_name, a.vendor, a.version as asset_version, "
+            f"a.system_name, a.environment "
             f"FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id "
             f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC LIMIT ?",
             params + [limit]
@@ -531,6 +532,9 @@ def _fetch_osv_version_info(cve_id: str) -> Dict:
                 result["affected_versions"] = f">= {introduced_versions[0]}, < {fixed_versions[-1]}"
             else:
                 result["affected_versions"] = f"< {fixed_versions[-1]}"
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            logger.debug(f"OSV.dev HTTP {exc.code} for {cve_up}")
     except Exception as exc:
         logger.debug(f"OSV.dev fetch {cve_up}: {exc}")
 
@@ -656,8 +660,6 @@ def scan_asset(asset_id: int) -> Dict:
             poc_count = len(e.get("_allLinks") or [])
             published = str(e.get("kev_date_added") or e.get("published") or "")
 
-            sources_json = json.dumps(_build_sources(cve, e, bool(is_kev)), ensure_ascii=False)
-
             affected_versions = ""
             fixed_version = ""
             if asset_version:
@@ -666,6 +668,8 @@ def scan_asset(asset_id: int) -> Dict:
                 fixed_version = osv.get("fixed_version", "")
                 if affected_versions and not _version_affected(asset_version, affected_versions):
                     continue  # CVE không ảnh hưởng phiên bản đang dùng
+
+            sources_json = json.dumps(_build_sources(cve, e, bool(is_kev)), ensure_ascii=False)
 
             if fixed_version:
                 latest_fix_versions.append(fixed_version)

@@ -82375,7 +82375,8 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
                     return sources.map(s => {
                         const cls = typeMap[s.name] || 'sw-src-nvd';
                         const short = shortMap[s.name] || s.name.substring(0, 3).toUpperCase();
-                        return `<a href="${escapeHtml(s.url || '#')}" target="_blank" rel="noopener" class="sw-src-badge ${cls}" title="${escapeHtml(s.name)}">${short}</a>`;
+                        const safeUrl = (s.url && /^https?:\/\//.test(s.url)) ? s.url : '#';
+                        return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" class="sw-src-badge ${cls}" title="${escapeHtml(s.name)}">${short}</a>`;
                     }).join('');
                 })();
                 rows += `<tr>
@@ -82383,7 +82384,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(al.title || '—')}${al.is_kev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
   <td><span class="sw-sev-badge ${swSevClass(al.severity)}">${escapeHtml(swSevLabel(al.severity))}</span></td>
   <td>${al.epss ? escapeHtml((parseFloat(al.epss)*100).toFixed(1)) + '%' : '—'}</td>
-  <td>${escapeHtml(al.software_name || '—')}</td>
+  <td>${escapeHtml(al.software_name || '—')}${al.asset_version ? `<br><span style="color:var(--text-muted);font-size:0.72rem;" title="Phiên bản hiện tại">v${escapeHtml(al.asset_version)}</span>` : ''}</td>
   <td>${escapeHtml(al.environment || '—')}</td>
   <td>${al.fixed_version ? `<span class="sw-fix-badge" title="Phiên bản đã vá">→ ${escapeHtml(al.fixed_version)}</span>` : '—'}</td>
   <td style="line-height:1.6;">${srcBadges}</td>
