@@ -3,7 +3,7 @@
 # Xem NOTICE.md để biết chi tiết attribution
 import json
 import binary_lab as binary_lab_mod
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 import requests
 from typing import Any, Dict, List, Optional
@@ -435,7 +435,7 @@ def feeds_catalog_sync():
     try:
         res = feed_manager.sync_catalog()
         if not res.get("ok"):
-            raise HTTPException(status_code=500, detail=res.get("reason", "unknown error"))
+            raise HTTPException(status_code=500, detail=res.get("reason", "lỗi không xác định"))
         return {"sources": feed_manager.get_feed_list(), "added": res.get("added", 0)}
     except HTTPException:
         raise
@@ -449,7 +449,7 @@ def feeds_catalog_toggle(req: FeedToggleRequest):
     try:
         result = feed_manager.toggle_feed(req.id, req.enabled)
         if not result.get("ok"):
-            raise HTTPException(status_code=404, detail=result.get("reason", "Feed source not found"))
+            raise HTTPException(status_code=404, detail=result.get("reason", "Không tìm thấy nguồn feed"))
         return result
     except HTTPException:
         raise
@@ -476,6 +476,275 @@ def feeds_status():
     except Exception:
         pass
     return out
+
+# ── Software Watch API ────────────────────────────────────────────────────────
+
+import software_monitor as sw_mod
+
+class _SwAssetReq(BaseModel):
+    system_name: str = ""
+    environment: str = ""
+    software_name: str
+    vendor: str = ""
+    version: str = ""
+    cve_search_term: str = ""
+    notes: str = ""
+
+class _SwUpdateReq(BaseModel):
+    system_name: Optional[str] = None
+    environment: Optional[str] = None
+    software_name: Optional[str] = None
+    vendor: Optional[str] = None
+    version: Optional[str] = None
+    cve_search_term: Optional[str] = None
+    notes: Optional[str] = None
+    enabled: Optional[int] = None
+
+class _SwToggleReq(BaseModel):
+    id: int
+    enabled: bool
+
+class _SwAckReq(BaseModel):
+    alert_id: Optional[int] = None
+    asset_id: Optional[int] = None
+
+@app.get("/api/software-watch/assets")
+def sw_get_assets(search: str = "", environment: str = ""):
+    try:
+        return {"assets": sw_mod.get_assets(search=search, environment=environment)}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/assets")
+def sw_add_asset(req: _SwAssetReq):
+    try:
+        return sw_mod.add_asset(
+            req.system_name, req.environment, req.software_name,
+            req.vendor, req.version, req.notes, req.cve_search_term
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.put("/api/software-watch/assets/{asset_id}")
+def sw_update_asset(asset_id: int, req: _SwUpdateReq):
+    try:
+        kwargs = {k: v for k, v in req.dict().items() if v is not None}
+        return sw_mod.update_asset(asset_id, **kwargs)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.delete("/api/software-watch/assets/{asset_id}")
+def sw_delete_asset(asset_id: int):
+    try:
+        return sw_mod.delete_asset(asset_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/import")
+async def sw_import_csv(file: UploadFile = File(...), replace: bool = False):
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig", errors="replace")
+        return sw_mod.import_csv(text, replace=replace)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/export")
+def sw_export_csv():
+    try:
+        csv_text = sw_mod.export_csv()
+        from fastapi.responses import Response
+        return Response(
+            content=csv_text.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=software_watch.csv"}
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/alerts")
+def sw_get_alerts(asset_id: Optional[int] = None, status: str = "",
+                  severity: str = "", limit: int = 200):
+    try:
+        return {"alerts": sw_mod.get_alerts(
+            asset_id=asset_id, status=status, severity=severity, limit=limit
+        )}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/alerts/ack")
+def sw_ack_alert(req: _SwAckReq):
+    try:
+        if req.alert_id is not None:
+            return sw_mod.ack_alert(req.alert_id)
+        return sw_mod.ack_all_alerts(asset_id=req.asset_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.delete("/api/software-watch/alerts/{alert_id}")
+def sw_delete_alert(alert_id: int):
+    try:
+        return sw_mod.delete_alert(alert_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.post("/api/software-watch/scan")
+def sw_scan(asset_id: Optional[int] = None):
+    try:
+        if asset_id is not None:
+            return sw_mod.scan_asset(asset_id)
+        return sw_mod.scan_all()
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/export-alerts")
+def sw_export_alerts(asset_id: Optional[int] = None, status: str = "", severity: str = "",
+                     environment: str = "", asset_ids: str = ""):
+    try:
+        csv_text = sw_mod.export_alerts_csv(asset_id=asset_id, status=status, severity=severity,
+                                             environment=environment, asset_ids=asset_ids)
+        from fastapi.responses import Response
+        return Response(
+            content=csv_text.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=cve_alerts.csv"}
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+class _SwLibReq(BaseModel):
+    system_name: str = ""
+    library_name: str = ""
+    stack: str = ""
+    min_version: str = ""
+    current_version: str = ""
+    status: str = "APPROVED"
+    notes: str = ""
+
+
+class _SwLibUpdateReq(BaseModel):
+    system_name: Optional[str] = None
+    library_name: Optional[str] = None
+    stack: Optional[str] = None
+    min_version: Optional[str] = None
+    current_version: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.get("/api/software-watch/libraries")
+def sw_get_libraries(search: str = "", system_name: str = "", status: str = ""):
+    try:
+        return {"libraries": sw_mod.get_libraries(search=search, system_name=system_name, status=status)}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/api/software-watch/libraries")
+def sw_add_library(req: _SwLibReq):
+    try:
+        return sw_mod.add_library(
+            req.system_name, req.library_name, req.stack,
+            req.min_version, req.current_version, req.status, req.notes
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.put("/api/software-watch/libraries/{lib_id}")
+def sw_update_library(lib_id: int, req: _SwLibUpdateReq):
+    try:
+        kwargs = {k: v for k, v in req.dict().items() if v is not None}
+        return sw_mod.update_library(lib_id, **kwargs)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.delete("/api/software-watch/libraries/{lib_id}")
+def sw_delete_library(lib_id: int):
+    try:
+        return sw_mod.delete_library(lib_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/api/software-watch/libraries/import")
+async def sw_import_libraries_csv(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig", errors="replace")
+        return sw_mod.import_libraries_csv(text)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/software-watch/libraries/export")
+def sw_export_libraries():
+    try:
+        csv_text = sw_mod.export_libraries_csv()
+        from fastapi.responses import Response
+        return Response(
+            content=csv_text.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=libraries.csv"}
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/software-watch/summary")
+def sw_summary():
+    try:
+        return sw_mod.get_summary()
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/software-watch/settings")
+def sw_get_settings():
+    return {
+        "webhook_url": sw_mod.get_setting("webhook_url", ""),
+        "webhook_enabled": sw_mod.get_setting("webhook_enabled", "1") == "1",
+    }
+
+
+@app.post("/api/software-watch/settings")
+def sw_save_settings(payload: dict = Body(...)):
+    if "webhook_url" in payload:
+        url = str(payload["webhook_url"])[:512]
+        if url and not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "URL phải bắt đầu bằng http:// hoặc https://")
+        sw_mod.save_setting("webhook_url", url)
+    if "webhook_enabled" in payload:
+        sw_mod.save_setting("webhook_enabled", "1" if payload["webhook_enabled"] else "0")
+    return {"ok": True}
+
+
+@app.post("/api/software-watch/settings/test-webhook")
+def sw_test_webhook(payload: dict = Body(...)):
+    import json as _json, urllib.request as _req, ssl as _ssl
+    url = str(payload.get("url", ""))[:512]
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "URL không hợp lệ")
+    test_payload = {"title": "✅ Test Metis Webhook",
+                    "message": "Kết nối webhook thành công từ Metis!", "test": True}
+    headers = {"Content-Type": "application/json"}
+    if "ntfy.sh" in url:
+        headers["Title"] = "Test Metis Webhook"
+        headers["Priority"] = "low"
+    try:
+        data = _json.dumps(test_payload).encode()
+        req = _req.Request(url, data=data, headers=headers, method="POST")
+        ctx = _ssl.create_default_context()
+        import os as _os
+        cafile = "/root/.ccr/ca-bundle.crt"
+        if _os.path.exists(cafile):
+            ctx.load_verify_locations(cafile)
+        with _req.urlopen(req, timeout=5, context=ctx) as resp:
+            return {"ok": True, "status": resp.status}
+    except Exception as exc:
+        raise HTTPException(502, f"Webhook thất bại: {exc}")
 
 # Deployment mode note: this deployment mode stores API credentials in the
 # browser (localStorage). Use only on trusted/local deployments.
@@ -540,7 +809,7 @@ def _intel_or_500(label: str, fn, *args, **kwargs):
             logger.warning("%s rate limited (429)", label)
             raise HTTPException(status_code=429, detail=f"{label} rate limit exceeded.")
         logger.exception("%s intel query failed", label)
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        raise HTTPException(status_code=500, detail="Lỗi máy chủ nội bộ")
 
 class IntelRequest(BaseModel):
     indicator: str
@@ -750,7 +1019,7 @@ def ai_settings_save(req: dict):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("MANTIS AI settings save failed")
-        raise HTTPException(status_code=500, detail="MANTIS AI settings save failed. Check backend logs for diagnostics.")
+        raise HTTPException(status_code=500, detail="Không thể lưu cài đặt Metis AI. Kiểm tra log backend để biết chi tiết.")
 
 
 @app.post("/api/ai/test")
@@ -4607,7 +4876,7 @@ def _index():
         with open(os.path.join(frontend_path, "index.html"), "r", encoding="utf-8") as f:
             html = f.read()
     except OSError:
-        return HTMLResponse("<h1>MANTIS frontend not found</h1>", status_code=500)
+        return HTMLResponse("<h1>Metis: Không tìm thấy frontend</h1>", status_code=500)
 
     v = _asset_version()
     html = html.replace('href="styles.css"', f'href="styles.css?v={v}"')

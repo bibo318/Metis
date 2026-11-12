@@ -513,6 +513,14 @@
 
                 </div>
 
+                <div class="nav-item" data-tab="vt-livehunt" title="VirusTotal LiveHunt YARA">
+
+                    <i class="fa-solid fa-crosshairs"></i>
+
+                    <span data-i18n="VT LiveHunt">VT LiveHunt</span>
+
+                </div>
+
                 <div class="nav-section-label" data-i18n="Telegram Toolkit">Bộ công cụ Telegram</div>
 
                 <div class="nav-item" data-tab="tg-channel-mon">
@@ -770,6 +778,19 @@
 
                     </div>
 
+                </div>
+
+                <!-- Live Intelligence Dashboard -->
+                <div id="home-dashboard" class="home-dashboard dark-scroll" style="display:none;">
+                    <div class="home-dash-header">
+                        <span class="home-dash-title"><i class="fa-solid fa-chart-line"></i> Bảng Điều Khiển Tình Báo</span>
+                        <span class="home-dash-refresh" id="home-dash-refresh-status">Đang tải...</span>
+                        <button class="home-dash-refresh-btn" id="home-dash-refresh-btn" title="Làm mới"><i class="fa-solid fa-rotate-right"></i></button>
+                    </div>
+                    <div class="home-kpi-grid" id="home-kpi-grid">
+                        <div class="home-kpi-tile home-kpi-loading">Đang tải...</div>
+                    </div>
+                    <div class="home-top-cves" id="home-top-cves"></div>
                 </div>
 
             </div>
@@ -1125,7 +1146,21 @@
 
             </div>
 
-
+            <!-- VT LiveHunt Panel -->
+            <div id="vt-livehunt-pane" class="dark-scroll" style="display:none;padding:20px 24px;">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+                    <i class="fa-solid fa-crosshairs" style="color:var(--accent);font-size:1.3rem;"></i>
+                    <div>
+                        <div style="font-size:1.1rem;font-weight:700;color:var(--text-main);">VT LiveHunt</div>
+                        <div style="font-size:0.78rem;color:var(--text-muted);">Giám sát YARA rules trên VirusTotal</div>
+                    </div>
+                </div>
+                <div class="sw-tabs" id="vt-hunt-tabs">
+                    <button class="sw-tab-btn active" data-vt-tab="rulesets">Rulesets</button>
+                    <button class="sw-tab-btn" data-vt-tab="notifications">Hits Gần Đây</button>
+                </div>
+                <div id="vt-hunt-content" style="margin-top:14px;"></div>
+            </div>
 
 <div id="ransomware-monitor-pane" class="ransom-monitor-pane dark-scroll" style="display: none;">
 
