@@ -18,16 +18,17 @@ DB_PATH = os.path.join(DATA_DIR, "software_watch.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sw_assets (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    system_name TEXT NOT NULL DEFAULT '',
-    environment TEXT NOT NULL DEFAULT '',
-    software_name TEXT NOT NULL DEFAULT '',
-    vendor      TEXT NOT NULL DEFAULT '',
-    version     TEXT NOT NULL DEFAULT '',
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    notes       TEXT DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT '',
-    updated_at  TEXT NOT NULL DEFAULT ''
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_name      TEXT NOT NULL DEFAULT '',
+    environment      TEXT NOT NULL DEFAULT '',
+    software_name    TEXT NOT NULL DEFAULT '',
+    vendor           TEXT NOT NULL DEFAULT '',
+    version          TEXT NOT NULL DEFAULT '',
+    cve_search_term  TEXT DEFAULT '',
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    notes            TEXT DEFAULT '',
+    created_at       TEXT NOT NULL DEFAULT '',
+    updated_at       TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS sw_alerts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +97,12 @@ def init_db():
     conn = _connect()
     try:
         conn.executescript(SCHEMA)
-        conn.commit()
+        # Migration: thêm cột mới nếu chưa có
+        try:
+            conn.execute("ALTER TABLE sw_assets ADD COLUMN cve_search_term TEXT DEFAULT ''")
+            conn.commit()
+        except Exception:
+            pass
     finally:
         conn.close()
 
@@ -133,16 +139,16 @@ def get_assets(search: str = "", environment: str = "") -> List[Dict]:
 
 
 def add_asset(system_name: str, environment: str, software_name: str,
-              vendor: str, version: str, notes: str = "") -> Dict:
+              vendor: str, version: str, notes: str = "", cve_search_term: str = "") -> Dict:
     init_db()
     conn = _connect()
     try:
         now = _now()
         cur = conn.execute(
-            "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, notes, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, "
+            "cve_search_term, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (system_name.strip(), environment.strip(), software_name.strip(),
-             vendor.strip(), version.strip(), notes.strip(), now, now)
+             vendor.strip(), version.strip(), cve_search_term.strip(), notes.strip(), now, now)
         )
         conn.commit()
         return {"ok": True, "id": cur.lastrowid}
@@ -153,7 +159,8 @@ def add_asset(system_name: str, environment: str, software_name: str,
 def update_asset(asset_id: int, **kwargs) -> Dict:
     init_db()
     conn = _connect()
-    allowed = {"system_name", "environment", "software_name", "vendor", "version", "notes", "enabled"}
+    allowed = {"system_name", "environment", "software_name", "vendor", "version",
+               "cve_search_term", "notes", "enabled"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return {"ok": False, "reason": "Không có trường nào để cập nhật"}
@@ -194,6 +201,8 @@ def import_csv(csv_text: str, replace: bool = False) -> Dict:
         "hãng cung cấp": "vendor",
         "phiên bản prod": "version",
         "phiên bản": "version",
+        "tên tra cứu cve": "cve_search_term",
+        "tên cvê": "cve_search_term",
         "ghi chú": "notes",
     }
     en_map = {
@@ -203,6 +212,8 @@ def import_csv(csv_text: str, replace: bool = False) -> Dict:
         "vendor": "vendor",
         "version": "version",
         "prod version": "version",
+        "cve search term": "cve_search_term",
+        "search term": "cve_search_term",
         "notes": "notes",
     }
     for h in headers:
@@ -245,10 +256,11 @@ def import_csv(csv_text: str, replace: bool = False) -> Dict:
                 continue
 
             conn.execute(
-                "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, notes, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, "
+                "cve_search_term, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (mapped.get("system_name", ""), mapped.get("environment", ""),
-                 sw, vendor, version, mapped.get("notes", ""), now, now)
+                 sw, vendor, version, mapped.get("cve_search_term", ""),
+                 mapped.get("notes", ""), now, now)
             )
             added += 1
 
@@ -421,14 +433,18 @@ def scan_asset(asset_id: int) -> Dict:
 
     sw_name = asset["software_name"]
     vendor = asset["vendor"]
+    cve_search_term = (asset.get("cve_search_term") or "").strip()
 
     # Tạo query tìm kiếm
     query_parts = []
-    if sw_name:
-        # Lấy phần chính của tên (bỏ "(K8s)" dạng alias)
+    if cve_search_term:
+        # Dùng tên tra cứu CVE do user nhập nếu có (ưu tiên hơn tên hiển thị)
+        query_parts.append(cve_search_term)
+    elif sw_name:
+        # Lấy phần chính của tên (bỏ "(K8s)" dạng alias và phần trong ngoặc)
         clean = re.sub(r'\([^)]+\)', '', sw_name).strip()
         query_parts.append(clean)
-    if vendor:
+    if vendor and not cve_search_term:
         # Lấy tên đầu tiên (trước dấu /)
         v = vendor.split("/")[0].strip()
         if v and v.lower() not in ["inc", "ltd", "corp", "foundation", "project"]:

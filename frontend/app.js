@@ -81960,6 +81960,8 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         envFilter: '',
         alertFilter: '',        // '' | 'new' | 'acknowledged'
         severityFilter: '',     // '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+        alertSortBy: 'epss',    // 'epss' | 'severity' | 'published' | 'cve_id'
+        alertSortDir: 'desc',   // 'asc' | 'desc'
         selectedAsset: null,
         groupBySystem: false,
         libSearch: '',
@@ -82310,7 +82312,31 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   ${swState.alerts.some(a => a.status === 'new') ? `<button id="sw-ack-all" class="sw-btn sw-btn-primary"><i class="fa-solid fa-check-double"></i> Đánh dấu đã xem</button>` : ''}
 </div>`;
 
-        if (swState.alerts.length === 0) {
+        const sevOrder = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1, '': 0 };
+        const sortedAlerts = [...swState.alerts].sort((a, b) => {
+            let va, vb;
+            if (swState.alertSortBy === 'epss') {
+                va = parseFloat(a.epss || 0); vb = parseFloat(b.epss || 0);
+            } else if (swState.alertSortBy === 'severity') {
+                va = sevOrder[(a.severity || '').toUpperCase()] || 0;
+                vb = sevOrder[(b.severity || '').toUpperCase()] || 0;
+            } else if (swState.alertSortBy === 'published') {
+                va = a.published || ''; vb = b.published || '';
+            } else {
+                va = a.cve_id || ''; vb = b.cve_id || '';
+            }
+            if (va < vb) return swState.alertSortDir === 'asc' ? -1 : 1;
+            if (va > vb) return swState.alertSortDir === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        function swSortTh(col, label) {
+            const active = swState.alertSortBy === col;
+            const icon = active ? (swState.alertSortDir === 'asc' ? '↑' : '↓') : '';
+            return `<th class="sw-sort-th${active ? ' sw-sort-active' : ''}" data-col="${escapeHtml(col)}" style="cursor:pointer;user-select:none;">${escapeHtml(label)} <span style="opacity:${active?1:0.3};font-size:0.8em;">${icon || '↕'}</span></th>`;
+        }
+
+        if (sortedAlerts.length === 0) {
             el.innerHTML = toolbar + `
 <div class="sw-empty">
   <i class="fa-solid fa-shield-check" style="font-size:2rem; opacity:0.3; margin-bottom:10px; display:block;"></i>
@@ -82318,7 +82344,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 </div>`;
         } else {
             let rows = '';
-            for (const al of swState.alerts) {
+            for (const al of sortedAlerts) {
                 rows += `<tr>
   <td>${al.status === 'new' ? '<span class="sw-new-dot"></span>' : ''}<strong>${escapeHtml(al.cve_id || '—')}</strong></td>
   <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(al.title || '—')}${al.is_kev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
@@ -82329,7 +82355,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <td>${escapeHtml(swFmt(al.published))}</td>
   <td style="white-space:nowrap;">
     ${al.status === 'new' ? `<button class="sw-btn-ack" data-id="${escapeHtml(String(al.id))}" title="Đánh dấu đã xem" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-check"></i></button>` : ''}
-    <a href="https://nvd.nist.gov/vuln/detail/${encodeURIComponent(al.cve_id || '')}" target="_blank" rel="noopener" style="color:var(--text-secondary);padding:3px 6px;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+    <a href="https://nvd.nist.gov/vuln/detail/${encodeURIComponent(al.cve_id || '')}" target="_blank" rel="noopener" style="color:var(--text-muted);padding:3px 6px;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
     <button class="sw-btn-del-al" data-id="${escapeHtml(String(al.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-trash"></i></button>
   </td>
 </tr>`;
@@ -82338,7 +82364,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 <div style="overflow-x:auto;">
 <table class="sw-asset-table">
   <thead><tr>
-    <th>CVE</th><th>Tiêu đề</th><th>Mức độ</th><th>EPSS</th><th>Phần mềm</th><th>Môi trường</th><th>Ngày</th><th>Hành động</th>
+    ${swSortTh('cve_id','CVE')}<th>Tiêu đề</th>${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}<th>Phần mềm</th><th>Môi trường</th>${swSortTh('published','Ngày')}<th>Hành động</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
@@ -82360,6 +82386,16 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         });
         el.querySelector('#sw-export-alerts')?.addEventListener('click', () => swDoExportAlerts());
         el.querySelector('#sw-ack-all')?.addEventListener('click', () => swAckAll());
+        el.querySelectorAll('.sw-sort-th').forEach(th => th.addEventListener('click', () => {
+            const col = th.dataset.col;
+            if (swState.alertSortBy === col) {
+                swState.alertSortDir = swState.alertSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                swState.alertSortBy = col;
+                swState.alertSortDir = col === 'cve_id' ? 'asc' : 'desc';
+            }
+            swRenderTabContent();
+        }));
         el.querySelectorAll('.sw-btn-ack').forEach(b => b.addEventListener('click', () => swAckAlert(parseInt(b.dataset.id))));
         el.querySelectorAll('.sw-btn-del-al').forEach(b => b.addEventListener('click', () => swDeleteAlert(parseInt(b.dataset.id))));
     }
@@ -82749,9 +82785,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         overlay.innerHTML = `
 <div class="sw-modal">
   <h3><i class="fa-solid fa-${editId ? 'pen' : 'plus'}" style="color:var(--accent);margin-right:8px;"></i>${editId ? 'Cập nhật' : 'Thêm'} phần mềm</h3>
-  <div class="sw-form-row"><label>Tên phần mềm *</label><input id="sw-f-name" type="text" value="${escapeHtml(asset?.software_name || '')}" placeholder="VD: Kubernetes (K8s)"></div>
-  <div class="sw-form-row"><label>Hãng cung cấp</label><input id="sw-f-vendor" type="text" value="${escapeHtml(asset?.vendor || '')}" placeholder="VD: CNCF"></div>
-  <div class="sw-form-row"><label>Phiên bản</label><input id="sw-f-version" type="text" value="${escapeHtml(asset?.version || '')}" placeholder="VD: v1.29.7"></div>
+  <div class="sw-form-row"><label>Tên phần mềm *</label><input id="sw-f-name" type="text" value="${escapeHtml(asset?.software_name || '')}" placeholder="VD: Redis (kèm Redis Sentinel)"></div>
+  <div class="sw-form-row"><label>Tên tra cứu CVE <span style="color:var(--text-muted);font-weight:400;">(tùy chọn — để trống sẽ dùng tên phần mềm)</span></label><input id="sw-f-cve-term" type="text" value="${escapeHtml(asset?.cve_search_term || '')}" placeholder="VD: redis (tên ngắn gọn để tra CVE chính xác hơn)"></div>
+  <div class="sw-form-row"><label>Hãng cung cấp</label><input id="sw-f-vendor" type="text" value="${escapeHtml(asset?.vendor || '')}" placeholder="VD: Redis Ltd."></div>
+  <div class="sw-form-row"><label>Phiên bản</label><input id="sw-f-version" type="text" value="${escapeHtml(asset?.version || '')}" placeholder="VD: v7.4.1"></div>
   <div class="sw-form-row"><label>Hệ thống / Dự án</label><input id="sw-f-sys" type="text" value="${escapeHtml(asset?.system_name || '')}" placeholder="VD: Nền tảng Kubernetes"></div>
   <div class="sw-form-row"><label>Môi trường</label><select id="sw-f-env">
     <option value="">—</option>
@@ -82772,6 +82809,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             if (!name) { swShowToast('Tên phần mềm không được để trống.', 'error'); return; }
             const body = {
                 software_name: name,
+                cve_search_term: overlay.querySelector('#sw-f-cve-term').value.trim(),
                 vendor: overlay.querySelector('#sw-f-vendor').value.trim(),
                 version: overlay.querySelector('#sw-f-version').value.trim(),
                 system_name: overlay.querySelector('#sw-f-sys').value.trim(),

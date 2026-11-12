@@ -10859,6 +10859,10 @@ i.spinner {
     padding: 8px 12px; border-top: 2px solid rgba(255,255,255,0.1);
 }
 
+/* Sort header */
+.sw-sort-th:hover { color: var(--text-main); }
+.sw-sort-th.sw-sort-active { color: var(--accent); }
+
 /* Empty state */
 .sw-empty {
     text-align: center; color: var(--text-muted);

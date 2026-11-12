@@ -487,6 +487,7 @@ class _SwAssetReq(BaseModel):
     software_name: str
     vendor: str = ""
     version: str = ""
+    cve_search_term: str = ""
     notes: str = ""
 
 class _SwUpdateReq(BaseModel):
@@ -495,6 +496,7 @@ class _SwUpdateReq(BaseModel):
     software_name: Optional[str] = None
     vendor: Optional[str] = None
     version: Optional[str] = None
+    cve_search_term: Optional[str] = None
     notes: Optional[str] = None
     enabled: Optional[int] = None
 
@@ -518,7 +520,7 @@ def sw_add_asset(req: _SwAssetReq):
     try:
         return sw_mod.add_asset(
             req.system_name, req.environment, req.software_name,
-            req.vendor, req.version, req.notes
+            req.vendor, req.version, req.notes, req.cve_search_term
         )
     except Exception as exc:
         raise HTTPException(500, str(exc))
