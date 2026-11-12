@@ -7,6 +7,8 @@ import os
 import re
 import sqlite3
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -62,6 +64,12 @@ CREATE TABLE IF NOT EXISTS sw_libraries (
 );
 CREATE INDEX IF NOT EXISTS idx_sw_libs_system ON sw_libraries(system_name);
 CREATE INDEX IF NOT EXISTS idx_sw_libs_status ON sw_libraries(status);
+CREATE TABLE IF NOT EXISTS sw_version_cache (
+    cve_id      TEXT PRIMARY KEY,
+    affected_v  TEXT DEFAULT '',
+    fixed_v     TEXT DEFAULT '',
+    fetched_at  TEXT DEFAULT ''
+);
 """
 
 CSV_COLUMNS = [
@@ -97,12 +105,19 @@ def init_db():
     conn = _connect()
     try:
         conn.executescript(SCHEMA)
-        # Migration: thêm cột mới nếu chưa có
-        try:
-            conn.execute("ALTER TABLE sw_assets ADD COLUMN cve_search_term TEXT DEFAULT ''")
-            conn.commit()
-        except Exception:
-            pass
+        for col_def in [
+            "ALTER TABLE sw_assets ADD COLUMN cve_search_term TEXT DEFAULT ''",
+            "ALTER TABLE sw_assets ADD COLUMN latest_version TEXT DEFAULT ''",
+            "ALTER TABLE sw_assets ADD COLUMN version_checked_at TEXT DEFAULT ''",
+            "ALTER TABLE sw_alerts ADD COLUMN affected_versions TEXT DEFAULT ''",
+            "ALTER TABLE sw_alerts ADD COLUMN fixed_version TEXT DEFAULT ''",
+            "ALTER TABLE sw_alerts ADD COLUMN sources_json TEXT DEFAULT '[]'",
+        ]:
+            try:
+                conn.execute(col_def)
+                conn.commit()
+            except Exception:
+                pass
     finally:
         conn.close()
 
@@ -201,6 +216,7 @@ def import_csv(csv_text: str, replace: bool = False) -> Dict:
         "hãng cung cấp": "vendor",
         "phiên bản prod": "version",
         "phiên bản": "version",
+        "phiên bản mới nhất": "latest_version",
         "tên tra cứu cve": "cve_search_term",
         "tên cvê": "cve_search_term",
         "ghi chú": "notes",
@@ -212,6 +228,7 @@ def import_csv(csv_text: str, replace: bool = False) -> Dict:
         "vendor": "vendor",
         "version": "version",
         "prod version": "version",
+        "latest version": "latest_version",
         "cve search term": "cve_search_term",
         "search term": "cve_search_term",
         "notes": "notes",
@@ -257,10 +274,11 @@ def import_csv(csv_text: str, replace: bool = False) -> Dict:
 
             conn.execute(
                 "INSERT INTO sw_assets (system_name, environment, software_name, vendor, version, "
-                "cve_search_term, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "latest_version, cve_search_term, notes, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (mapped.get("system_name", ""), mapped.get("environment", ""),
-                 sw, vendor, version, mapped.get("cve_search_term", ""),
-                 mapped.get("notes", ""), now, now)
+                 sw, vendor, version, mapped.get("latest_version", ""),
+                 mapped.get("cve_search_term", ""), mapped.get("notes", ""), now, now)
             )
             added += 1
 
@@ -279,14 +297,25 @@ def export_csv() -> str:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT system_name, environment, software_name, vendor, version, notes FROM sw_assets ORDER BY system_name, software_name"
+            "SELECT system_name, environment, software_name, vendor, version, "
+            "latest_version, notes FROM sw_assets ORDER BY system_name, software_name"
         ).fetchall()
         out = io.StringIO()
         writer = csv.writer(out)
-        writer.writerow(CSV_COLUMNS + ["Ghi chú"])
+        writer.writerow(CSV_COLUMNS + ["Phiên bản mới nhất", "Trạng thái phiên bản", "Ghi chú"])
         for r in rows:
+            cur_v = r["version"] or ""
+            lat_v = r["latest_version"] or ""
+            if not cur_v:
+                ver_status = "CHƯA XÁC ĐỊNH"
+            elif lat_v and cur_v != lat_v:
+                ver_status = "CẦN NÂNG CẤP"
+            elif lat_v and cur_v == lat_v:
+                ver_status = "ÁP DỤNG"
+            else:
+                ver_status = "CHƯA XÁC ĐỊNH"
             writer.writerow([r["system_name"], r["environment"], r["software_name"],
-                             r["vendor"], r["version"], r["notes"] or ""])
+                             r["vendor"], cur_v, lat_v, ver_status, r["notes"] or ""])
         return out.getvalue()
     finally:
         conn.close()
@@ -414,6 +443,146 @@ def _matches_software(entry: Dict, sw_name: str, vendor: str) -> bool:
     return True
 
 
+def _build_sources(cve_id: str, entry: dict, is_kev: bool) -> list:
+    """Extract links đa nguồn từ pocindex entry."""
+    sources = [{"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}", "type": "primary"}]
+    if is_kev:
+        sources.append({"name": "CISA KEV",
+                        "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+                        "type": "advisory"})
+    for url in (entry.get("poc") or []):
+        if isinstance(url, str) and "github.com" in url:
+            sources.append({"name": "GitHub PoC", "url": url, "type": "poc"})
+            break
+    for url in (entry.get("edb") or []):
+        if isinstance(url, str):
+            full = url if url.startswith("http") else f"https://www.exploit-db.com/exploits/{url}"
+            sources.append({"name": "ExploitDB", "url": full, "type": "exploit"})
+            break
+    for url in (entry.get("nuclei") or []):
+        if isinstance(url, str):
+            sources.append({"name": "Nuclei", "url": url, "type": "template"})
+            break
+    for url in (entry.get("msf") or []):
+        if isinstance(url, str):
+            sources.append({"name": "Metasploit", "url": url, "type": "exploit"})
+            break
+    for url in (entry.get("vulhub") or []):
+        if isinstance(url, str):
+            sources.append({"name": "VulHub", "url": url, "type": "poc"})
+            break
+    try:
+        import pocindex_mod as _pm
+        advisories = (_pm.state.get("metadata") or {}).get(cve_id.upper(), {}).get("advisories") or []
+        if isinstance(advisories, str):
+            advisories = [advisories]
+        for adv in advisories:
+            if isinstance(adv, str) and "github.com/advisories" in adv:
+                sources.append({"name": "GitHub Advisory", "url": adv, "type": "advisory"})
+                break
+    except Exception:
+        pass
+    return sources[:20]
+
+
+def _fetch_osv_version_info(cve_id: str) -> Dict:
+    """Fetch affected/fixed versions từ OSV.dev. Cache 7 ngày."""
+    cve_up = cve_id.upper()
+    conn = _connect()
+    try:
+        cached = conn.execute(
+            "SELECT affected_v, fixed_v, fetched_at FROM sw_version_cache WHERE cve_id=?",
+            (cve_up,)
+        ).fetchone()
+        if cached:
+            try:
+                fetched = datetime.fromisoformat(cached["fetched_at"].replace("Z", "+00:00"))
+                if (datetime.now(timezone.utc) - fetched).days < 7:
+                    return {"affected_versions": cached["affected_v"], "fixed_version": cached["fixed_v"]}
+            except Exception:
+                pass
+    finally:
+        conn.close()
+
+    result: Dict = {"affected_versions": "", "fixed_version": ""}
+    try:
+        url = f"https://api.osv.dev/v1/vulns/{cve_up}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Metis-SoftwareWatch/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        fixed_versions: List[str] = []
+        introduced_versions: List[str] = []
+        for affected in (data.get("affected") or []):
+            for rng in (affected.get("ranges") or []):
+                for event in (rng.get("events") or []):
+                    if "fixed" in event:
+                        v = str(event["fixed"]).strip()
+                        if v and v not in fixed_versions:
+                            fixed_versions.append(v)
+                    if "introduced" in event:
+                        intro = str(event["introduced"]).strip()
+                        if intro and intro != "0" and intro not in introduced_versions:
+                            introduced_versions.append(intro)
+
+        if fixed_versions:
+            result["fixed_version"] = fixed_versions[-1]
+            if introduced_versions:
+                result["affected_versions"] = f">= {introduced_versions[0]}, < {fixed_versions[-1]}"
+            else:
+                result["affected_versions"] = f"< {fixed_versions[-1]}"
+    except Exception as exc:
+        logger.debug(f"OSV.dev fetch {cve_up}: {exc}")
+
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sw_version_cache (cve_id, affected_v, fixed_v, fetched_at) "
+            "VALUES (?, ?, ?, ?)",
+            (cve_up, result["affected_versions"], result["fixed_version"], _now())
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    return result
+
+
+def _version_tuple(v: str) -> tuple:
+    parts = re.findall(r'\d+', v.split("-")[0].split("+")[0])
+    return tuple(int(p) for p in parts[:5]) if parts else (0,)
+
+
+def _version_affected(asset_version: str, affected_range: str) -> bool:
+    """True nếu asset_version nằm trong affected_range; fallback True nếu không parse được."""
+    if not affected_range or not asset_version:
+        return True
+    try:
+        av = _version_tuple(asset_version)
+        for part in affected_range.split(","):
+            part = part.strip()
+            if part.startswith(">="):
+                if av < _version_tuple(part[2:].strip()):
+                    return False
+            elif part.startswith(">"):
+                if av <= _version_tuple(part[1:].strip()):
+                    return False
+            elif part.startswith("<="):
+                if av > _version_tuple(part[2:].strip()):
+                    return False
+            elif part.startswith("<"):
+                if av >= _version_tuple(part[1:].strip()):
+                    return False
+            elif part.startswith("="):
+                if av != _version_tuple(part[1:].strip()):
+                    return False
+        return True
+    except Exception:
+        return True
+
+
 def scan_asset(asset_id: int) -> Dict:
     """Quét CVE cho 1 asset, lưu alert nếu tìm thấy mới."""
     try:
@@ -468,6 +637,9 @@ def scan_asset(asset_id: int) -> Dict:
             seen_cves.add(cve)
             deduped.append(e)
 
+    asset_version = asset.get("version", "").strip()
+    latest_fix_versions: List[str] = []
+
     conn = _connect()
     try:
         now = _now()
@@ -476,29 +648,54 @@ def scan_asset(asset_id: int) -> Dict:
             if not cve:
                 continue
 
-            # Lấy EPSS
             epss_meta = (pocindex_mod.state.get("epss") or {}).get(cve) or []
             epss = float(epss_meta[0]) if epss_meta else 0.0
-
             is_kev = 1 if cve in (pocindex_mod.state.get("kev") or {}) else 0
             severity = str(e.get("severity") or "")
             title = str(e.get("title") or e.get("kev_vulnerability_name") or cve)
             poc_count = len(e.get("_allLinks") or [])
             published = str(e.get("kev_date_added") or e.get("published") or "")
 
+            sources_json = json.dumps(_build_sources(cve, e, bool(is_kev)), ensure_ascii=False)
+
+            affected_versions = ""
+            fixed_version = ""
+            if asset_version:
+                osv = _fetch_osv_version_info(cve)
+                affected_versions = osv.get("affected_versions", "")
+                fixed_version = osv.get("fixed_version", "")
+                if affected_versions and not _version_affected(asset_version, affected_versions):
+                    continue  # CVE không ảnh hưởng phiên bản đang dùng
+
+            if fixed_version:
+                latest_fix_versions.append(fixed_version)
+
             try:
                 conn.execute(
                     "INSERT OR IGNORE INTO sw_alerts "
-                    "(asset_id, cve_id, title, severity, epss, is_kev, poc_count, published, source, status, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)",
-                    (asset_id, cve, title, severity, epss, is_kev, poc_count, published, "pocindex/kev", now)
+                    "(asset_id, cve_id, title, severity, epss, is_kev, poc_count, published, source, "
+                    "affected_versions, fixed_version, sources_json, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)",
+                    (asset_id, cve, title, severity, epss, is_kev, poc_count, published, "pocindex/kev",
+                     affected_versions, fixed_version, sources_json, now)
                 )
                 if conn.execute("SELECT changes()").fetchone()[0] > 0:
                     found += 1
             except sqlite3.IntegrityError:
-                pass  # Already exists
+                pass
 
         conn.commit()
+
+        if latest_fix_versions:
+            try:
+                latest = max(latest_fix_versions, key=_version_tuple)
+            except Exception:
+                latest = latest_fix_versions[-1]
+            conn.execute(
+                "UPDATE sw_assets SET latest_version=?, version_checked_at=? WHERE id=?",
+                (latest, _now(), asset_id)
+            )
+            conn.commit()
     finally:
         conn.close()
 
@@ -568,20 +765,38 @@ def export_alerts_csv(asset_id: Optional[int] = None, status: str = "",
         out = io.StringIO()
         writer = csv.writer(out)
         writer.writerow([
-            "Phần mềm", "Hãng cung cấp", "Phiên bản", "Hệ thống", "Môi trường",
+            "Phần mềm", "Hãng cung cấp", "Phiên bản hiện tại", "Phiên bản vá", "Hệ thống", "Môi trường",
             "CVE", "Tiêu đề", "Mức độ", "EPSS (%)", "Trong KEV",
-            "Số PoC", "Ngày phát hiện", "Trạng thái", "Link NVD"
+            "Số PoC", "Ngày phát hiện", "Trạng thái",
+            "Link NVD", "Link GitHub PoC", "Link ExploitDB", "Link Nuclei", "Link Metasploit", "Link VulHub"
         ])
         for r in rows:
             epss_pct = f"{float(r['epss'] or 0) * 100:.1f}%" if r['epss'] else "0.0%"
+            sources: list = []
+            try:
+                sources = json.loads(r["sources_json"] or "[]")
+            except Exception:
+                pass
+
+            def _src_link(name_prefix: str) -> str:
+                for s in sources:
+                    if str(s.get("name", "")).startswith(name_prefix):
+                        return s.get("url", "")
+                return ""
+
             writer.writerow([
                 r["software_name"], r["vendor"] or "", r["asset_version"] or "",
-                r["system_name"], r["environment"],
+                r["fixed_version"] or "", r["system_name"], r["environment"],
                 r["cve_id"], r["title"] or "", r["severity"] or "",
                 epss_pct, "Có" if r["is_kev"] else "Không",
                 r["poc_count"] or 0, r["published"] or "",
                 "Mới" if r["status"] == "new" else "Đã xem",
-                f"https://nvd.nist.gov/vuln/detail/{r['cve_id']}" if r["cve_id"] else ""
+                _src_link("NVD") or (f"https://nvd.nist.gov/vuln/detail/{r['cve_id']}" if r["cve_id"] else ""),
+                _src_link("GitHub PoC"),
+                _src_link("ExploitDB"),
+                _src_link("Nuclei"),
+                _src_link("Metasploit"),
+                _src_link("VulHub"),
             ])
         return out.getvalue()
     finally:

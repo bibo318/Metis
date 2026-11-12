@@ -10869,6 +10869,23 @@ i.spinner {
     padding: 50px 0; font-size: 0.9rem;
 }
 
+/* Source badges */
+.sw-src-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 0.68rem; font-weight: 700; text-decoration: none;
+    margin-right: 2px; margin-bottom: 2px; white-space: nowrap;
+    line-height: 1.4;
+}
+.sw-src-nvd    { background: #1d4ed8; color: #fff; }
+.sw-src-github { background: #333;    color: #fff; }
+.sw-src-edb    { background: #dc2626; color: #fff; }
+.sw-src-nuclei { background: #ea580c; color: #fff; }
+.sw-src-msf    { background: #7c3aed; color: #fff; }
+.sw-src-vulhub { background: #0891b2; color: #fff; }
+.sw-src-cisa   { background: #15803d; color: #fff; }
+.sw-upgrade-hint { color: var(--accent); font-size: 0.72rem; display: block; margin-top: 2px; }
+.sw-fix-badge { color: #4ade80; font-size: 0.78rem; }
+
 /* Modal */
 .sw-modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.65);

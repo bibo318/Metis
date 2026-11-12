@@ -82276,7 +82276,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         return `<tr data-sw-asset-id="${escapeHtml(String(a.id))}" class="${newCount > 0 ? 'sw-alert-row' : ''}">
   <td>${newCount > 0 ? '<span class="sw-new-dot"></span>' : ''}<span style="font-weight:600;">${escapeHtml(a.software_name || '')}</span>${hasKev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
   <td>${escapeHtml(a.vendor || '—')}</td>
-  <td>${escapeHtml(a.version || '—')}</td>
+  <td>${escapeHtml(a.version || '—')}${a.latest_version && a.latest_version !== a.version ? `<span class="sw-upgrade-hint" title="Khuyến nghị nâng cấp lên phiên bản đã vá CVE">↑ ${escapeHtml(a.latest_version)}</span>` : ''}</td>
   <td>${escapeHtml(a.system_name || '—')}</td>
   <td>${escapeHtml(a.environment || '—')}</td>
   <td>${newCount > 0 ? `<span class="sw-sev-badge ${swSevClass(topSev)}" style="margin-right:4px;">${escapeHtml(String(newCount))} mới</span>` : '<span style="color:var(--text-secondary);font-size:0.8rem;">Không có</span>'}</td>
@@ -82354,17 +82354,42 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         } else {
             let rows = '';
             for (const al of sortedAlerts) {
+                let sources = [];
+                try { sources = JSON.parse(al.sources_json || '[]'); } catch(e) {}
+                const srcBadges = (() => {
+                    const typeMap = {
+                        'NVD': 'sw-src-nvd', 'GitHub PoC': 'sw-src-github',
+                        'GitHub Advisory': 'sw-src-github', 'ExploitDB': 'sw-src-edb',
+                        'Nuclei': 'sw-src-nuclei', 'Metasploit': 'sw-src-msf',
+                        'VulHub': 'sw-src-vulhub', 'CISA KEV': 'sw-src-cisa'
+                    };
+                    const shortMap = {
+                        'NVD': 'NVD', 'GitHub PoC': 'GH', 'GitHub Advisory': 'GH-ADV',
+                        'ExploitDB': 'EDB', 'Nuclei': 'NUC', 'Metasploit': 'MSF',
+                        'VulHub': 'VH', 'CISA KEV': 'KEV'
+                    };
+                    if (!sources.length) {
+                        const nvdUrl = `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(al.cve_id || '')}`;
+                        return `<a href="${nvdUrl}" target="_blank" rel="noopener" class="sw-src-badge sw-src-nvd" title="NVD">NVD</a>`;
+                    }
+                    return sources.map(s => {
+                        const cls = typeMap[s.name] || 'sw-src-nvd';
+                        const short = shortMap[s.name] || s.name.substring(0, 3).toUpperCase();
+                        return `<a href="${escapeHtml(s.url || '#')}" target="_blank" rel="noopener" class="sw-src-badge ${cls}" title="${escapeHtml(s.name)}">${short}</a>`;
+                    }).join('');
+                })();
                 rows += `<tr>
   <td>${al.status === 'new' ? '<span class="sw-new-dot"></span>' : ''}<strong>${escapeHtml(al.cve_id || '—')}</strong></td>
-  <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(al.title || '—')}${al.is_kev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
+  <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(al.title || '—')}${al.is_kev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
   <td><span class="sw-sev-badge ${swSevClass(al.severity)}">${escapeHtml(swSevLabel(al.severity))}</span></td>
   <td>${al.epss ? escapeHtml((parseFloat(al.epss)*100).toFixed(1)) + '%' : '—'}</td>
   <td>${escapeHtml(al.software_name || '—')}</td>
   <td>${escapeHtml(al.environment || '—')}</td>
+  <td>${al.fixed_version ? `<span class="sw-fix-badge" title="Phiên bản đã vá">→ ${escapeHtml(al.fixed_version)}</span>` : '—'}</td>
+  <td style="line-height:1.6;">${srcBadges}</td>
   <td>${escapeHtml(swFmt(al.published))}</td>
   <td style="white-space:nowrap;">
     ${al.status === 'new' ? `<button class="sw-btn-ack" data-id="${escapeHtml(String(al.id))}" title="Đánh dấu đã xem" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-check"></i></button>` : ''}
-    <a href="https://nvd.nist.gov/vuln/detail/${encodeURIComponent(al.cve_id || '')}" target="_blank" rel="noopener" style="color:var(--text-muted);padding:3px 6px;"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
     <button class="sw-btn-del-al" data-id="${escapeHtml(String(al.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-trash"></i></button>
   </td>
 </tr>`;
@@ -82373,7 +82398,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 <div style="overflow-x:auto;">
 <table class="sw-asset-table">
   <thead><tr>
-    ${swSortTh('cve_id','CVE')}${swSortTh('title','Tiêu đề')}${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}${swSortTh('software_name','Phần mềm')}${swSortTh('environment','Môi trường')}${swSortTh('published','Ngày')}<th>Hành động</th>
+    ${swSortTh('cve_id','CVE')}${swSortTh('title','Tiêu đề')}${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}${swSortTh('software_name','Phần mềm')}${swSortTh('environment','Môi trường')}<th title="Phiên bản đã vá">Fix v.</th><th>Nguồn</th>${swSortTh('published','Ngày')}<th>Hành động</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
