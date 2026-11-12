@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS sw_alerts (
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_asset ON sw_alerts(asset_id);
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_status ON sw_alerts(status);
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_cve ON sw_alerts(cve_id);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_severity ON sw_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_asset_status ON sw_alerts(asset_id, status);
+CREATE INDEX IF NOT EXISTS idx_sw_alerts_sort ON sw_alerts(is_kev DESC, epss DESC, created_at DESC);
 CREATE TABLE IF NOT EXISTS sw_libraries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     system_name     TEXT NOT NULL DEFAULT '',
@@ -395,7 +398,7 @@ def export_csv() -> str:
 # ── Alerts ────────────────────────────────────────────────────────────────────
 
 def get_alerts(asset_id: Optional[int] = None, status: str = "",
-               severity: str = "", limit: int = 200) -> List[Dict]:
+               severity: str = "", page: int = 1, per_page: int = 100) -> Dict:
     init_db()
     conn = _connect()
     try:
@@ -411,14 +414,21 @@ def get_alerts(asset_id: Optional[int] = None, status: str = "",
             clauses.append("al.severity=?")
             params.append(severity.upper())
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        per_page = max(10, min(per_page, 500))
+        page = max(1, page)
+        offset = (page - 1) * per_page
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id {where}",
+            params
+        ).fetchone()[0]
         rows = conn.execute(
             f"SELECT al.*, a.software_name, a.vendor, a.version as asset_version, "
             f"a.system_name, a.environment "
             f"FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id "
-            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC LIMIT ?",
-            params + [limit]
+            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset]
         ).fetchall()
-        return [dict(r) for r in rows]
+        return {"alerts": [dict(r) for r in rows], "total": total, "page": page, "per_page": per_page}
     finally:
         conn.close()
 
@@ -731,16 +741,18 @@ def scan_asset(asset_id: int) -> Dict:
             poc_count = len(e.get("_allLinks") or [])
             published = str(e.get("kev_date_added") or e.get("published") or "")
 
-            affected_versions = ""
-            fixed_version = ""
-            if asset_version:
-                osv = _fetch_osv_version_info(cve)
-                affected_versions = osv.get("affected_versions", "")
-                fixed_version = osv.get("fixed_version", "")
-                if affected_versions and not _version_affected(asset_version, affected_versions):
+            # Fetch OSV cho TẤT CẢ CVE (không gate theo asset_version)
+            osv = _fetch_osv_version_info(cve)
+            affected_versions = osv.get("affected_versions", "")
+            fixed_version = osv.get("fixed_version", "")
+
+            # Chỉ filter version khi asset CÓ version VÀ OSV có affected range
+            if asset_version and affected_versions:
+                if not _version_affected(asset_version, affected_versions):
                     continue  # CVE không ảnh hưởng phiên bản đang dùng
 
-            sources_json = json.dumps(_build_sources(cve, e, bool(is_kev)), ensure_ascii=False)
+            sources = _build_sources(cve, e, bool(is_kev))
+            sources_json = json.dumps(sources, ensure_ascii=False)
 
             if fixed_version:
                 latest_fix_versions.append(fixed_version)
@@ -754,7 +766,8 @@ def scan_asset(asset_id: int) -> Dict:
                     (asset_id, cve, title, severity, epss, is_kev, poc_count, published, "pocindex/kev",
                      affected_versions, fixed_version, sources_json, now)
                 )
-                if conn.execute("SELECT changes()").fetchone()[0] > 0:
+                new_row = conn.execute("SELECT changes()").fetchone()[0] > 0
+                if new_row:
                     found += 1
                     if severity in ("CRITICAL", "HIGH") and (is_kev or epss >= 0.5):
                         try:
@@ -762,6 +775,19 @@ def scan_asset(asset_id: int) -> Dict:
                                            severity, bool(is_kev), epss, fixed_version)
                         except Exception:
                             pass
+                else:
+                    # Upsert: refresh fixed_version và sources khi có data tốt hơn
+                    has_better_sources = len(sources) > 1
+                    if fixed_version or has_better_sources:
+                        conn.execute(
+                            """UPDATE sw_alerts SET fixed_version=?, sources_json=?, affected_versions=?
+                               WHERE asset_id=? AND cve_id=? AND (
+                                   (fixed_version='' AND ?) OR
+                                   (sources_json='[]' OR sources_json LIKE '[{"name": "NVD"%') AND ?
+                               )""",
+                            (fixed_version, sources_json, affected_versions,
+                             asset_id, cve, bool(fixed_version), has_better_sources)
+                        )
             except sqlite3.IntegrityError:
                 pass
 

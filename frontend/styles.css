@@ -10804,6 +10804,10 @@ i.spinner {
 .sw-last-scan {
     font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;
 }
+.sw-pagination { display: flex; align-items: center; gap: 4px; }
+.sw-pg-info { font-size: 0.78rem; color: var(--text-muted); padding: 0 4px; white-space: nowrap; }
+.sw-pg-prev, .sw-pg-next { padding: 3px 8px; font-size: 0.78rem; min-width: 28px; }
+.sw-pg-prev:disabled, .sw-pg-next:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* Table */
 .sw-asset-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }

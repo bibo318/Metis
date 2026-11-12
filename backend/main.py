@@ -564,11 +564,11 @@ def sw_export_csv():
 
 @app.get("/api/software-watch/alerts")
 def sw_get_alerts(asset_id: Optional[int] = None, status: str = "",
-                  severity: str = "", limit: int = 200):
+                  severity: str = "", page: int = 1, per_page: int = 100):
     try:
-        return {"alerts": sw_mod.get_alerts(
-            asset_id=asset_id, status=status, severity=severity, limit=limit
-        )}
+        return sw_mod.get_alerts(
+            asset_id=asset_id, status=status, severity=severity, page=page, per_page=per_page
+        )
     except Exception as exc:
         raise HTTPException(500, str(exc))
 

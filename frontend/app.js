@@ -82044,6 +82044,9 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         libSearch: '',
         libStatusFilter: '',
         loading: false,
+        alertPage: 1,
+        alertTotal: 0,
+        alertPerPage: 100,
     };
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -82093,7 +82096,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     }
 
     async function swFetchAlerts() {
-        const params = new URLSearchParams({ limit: '300' });
+        const params = new URLSearchParams({
+            page: String(swState.alertPage),
+            per_page: String(swState.alertPerPage),
+        });
         if (swState.selectedAsset) params.set('asset_id', String(swState.selectedAsset));
         if (swState.alertFilter) params.set('status', swState.alertFilter);
         if (swState.severityFilter) params.set('severity', swState.severityFilter);
@@ -82101,6 +82107,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         if (!r.ok) throw new Error('Lỗi tải cảnh báo');
         const d = await r.json();
         swState.alerts = d.alerts || [];
+        swState.alertTotal = d.total || 0;
     }
 
     async function swFetchLibraries() {
@@ -82519,7 +82526,13 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <option value="LOW" ${swState.severityFilter === 'LOW' ? 'selected' : ''}>LOW</option>
   </select>
   <div class="sw-toolbar-sep"></div>
-  <span class="sw-count-badge">${escapeHtml(String(swState.alerts.length))} cảnh báo</span>
+  <span class="sw-count-badge">${escapeHtml(String(swState.alertTotal || swState.alerts.length))} cảnh báo</span>
+  ${swState.alertTotal > swState.alertPerPage ? `
+  <div class="sw-pagination">
+    <button class="sw-btn sw-pg-prev" ${swState.alertPage <= 1 ? 'disabled' : ''} title="Trang trước"><i class="fa-solid fa-chevron-left"></i></button>
+    <span class="sw-pg-info">Trang ${swState.alertPage}/${Math.ceil(swState.alertTotal/swState.alertPerPage)}</span>
+    <button class="sw-btn sw-pg-next" ${swState.alertPage >= Math.ceil(swState.alertTotal/swState.alertPerPage) ? 'disabled' : ''} title="Trang sau"><i class="fa-solid fa-chevron-right"></i></button>
+  </div>` : ''}
   <button id="sw-export-alerts" class="sw-btn" title="Xuất báo cáo CVE ra CSV">
     <i class="fa-solid fa-file-csv"></i> Xuất báo cáo CVE
   </button>
@@ -82624,14 +82637,23 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         });
         el.querySelector('#sw-alert-status')?.addEventListener('change', e => {
             swState.alertFilter = e.target.value;
+            swState.alertPage = 1;
             swLoadAndRender();
         });
         el.querySelector('#sw-sev-filter')?.addEventListener('change', e => {
             swState.severityFilter = e.target.value;
+            swState.alertPage = 1;
             swLoadAndRender();
         });
         el.querySelector('#sw-export-alerts')?.addEventListener('click', () => swShowExportModal());
         el.querySelector('#sw-ack-all')?.addEventListener('click', () => swAckAll());
+        el.querySelector('.sw-pg-prev')?.addEventListener('click', () => {
+            if (swState.alertPage > 1) { swState.alertPage--; swLoadAndRender(); }
+        });
+        el.querySelector('.sw-pg-next')?.addEventListener('click', () => {
+            const total = Math.ceil(swState.alertTotal / swState.alertPerPage);
+            if (swState.alertPage < total) { swState.alertPage++; swLoadAndRender(); }
+        });
         el.querySelectorAll('.sw-sort-th').forEach(th => th.addEventListener('click', () => {
             const col = th.dataset.col;
             if (swState.alertSortBy === col) {
@@ -82785,14 +82807,27 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     }
 
     async function swAckAll() {
+        // Optimistic update: cập nhật UI ngay
+        swState.alerts.forEach(a => { if (a.status === 'new') a.status = 'acknowledged'; });
+        const el = document.getElementById('sw-content');
+        if (el) swRenderAlerts(el);
+        // Gọi API background
         try {
             await fetch(`${SW_API}/alerts/ack`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ asset_id: swState.selectedAsset || null }),
             });
+            // Refresh summary counts, không reload alerts
+            if (typeof swFetchSummary === 'function') {
+                await swFetchSummary();
+                const sel = document.getElementById('sw-content');
+                if (sel) swRenderSummary(sel);
+            }
+        } catch (e) {
+            console.error(e);
             await swLoadAndRender();
-        } catch (e) { console.error(e); }
+        }
     }
 
     async function swDeleteAlert(alertId) {
