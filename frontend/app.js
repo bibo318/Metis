@@ -81951,14 +81951,19 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 
     const SW_API = `${API_BASE}/api/software-watch`;
     let swState = {
-        tab: 'assets',      // 'assets' | 'alerts'
+        tab: 'assets',          // 'assets' | 'alerts' | 'libraries'
         assets: [],
         alerts: [],
+        libraries: [],
         summary: {},
         search: '',
         envFilter: '',
-        alertFilter: '',    // '' | 'new' | 'acknowledged'
+        alertFilter: '',        // '' | 'new' | 'acknowledged'
+        severityFilter: '',     // '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
         selectedAsset: null,
+        groupBySystem: false,
+        libSearch: '',
+        libStatusFilter: '',
         loading: false,
     };
 
@@ -82012,10 +82017,21 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         const params = new URLSearchParams({ limit: '300' });
         if (swState.selectedAsset) params.set('asset_id', String(swState.selectedAsset));
         if (swState.alertFilter) params.set('status', swState.alertFilter);
+        if (swState.severityFilter) params.set('severity', swState.severityFilter);
         const r = await fetch(`${SW_API}/alerts?${params}`);
         if (!r.ok) throw new Error('Lỗi tải cảnh báo');
         const d = await r.json();
         swState.alerts = d.alerts || [];
+    }
+
+    async function swFetchLibraries() {
+        const params = new URLSearchParams();
+        if (swState.libSearch) params.set('search', swState.libSearch);
+        if (swState.libStatusFilter) params.set('status', swState.libStatusFilter);
+        const r = await fetch(`${SW_API}/libraries?${params}`);
+        if (!r.ok) throw new Error('Lỗi tải thư viện');
+        const d = await r.json();
+        swState.libraries = d.libraries || [];
     }
 
     // ── Badge in sidebar ──────────────────────────────────────────────────
@@ -82099,6 +82115,9 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
       <i class="fa-solid fa-triangle-exclamation"></i> Cảnh báo CVE
       ${newAlerts > 0 ? `<span style="background:#dc2626;color:#fff;border-radius:10px;padding:1px 6px;font-size:0.68rem;font-weight:700;margin-left:4px;">${escapeHtml(String(newAlerts))}</span>` : ''}
     </button>
+    <button class="sw-tab-btn ${swState.tab === 'libraries' ? 'active' : ''}" data-sw-tab="libraries">
+      <i class="fa-solid fa-box-archive"></i> Thư viện / Package
+    </button>
   </div>
 
   <div id="sw-tab-content"></div>
@@ -82127,12 +82146,23 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         if (!el) return;
         if (swState.tab === 'assets') {
             swRenderAssets(el);
+        } else if (swState.tab === 'libraries') {
+            swRenderLibraries(el);
         } else {
             swRenderAlerts(el);
         }
     }
 
     function swRenderAssets(el) {
+        const lastScan = localStorage.getItem('sw_last_scan');
+        let lastScanText = '';
+        if (lastScan) {
+            const mins = Math.round((Date.now() - new Date(lastScan)) / 60000);
+            if (mins < 60) lastScanText = `Quét cuối: ${mins} phút trước`;
+            else if (mins < 1440) lastScanText = `Quét cuối: ${Math.round(mins/60)} giờ trước`;
+            else lastScanText = `Quét cuối: ${Math.round(mins/1440)} ngày trước`;
+        }
+
         const toolbar = `
 <div class="sw-toolbar">
   <input type="text" id="sw-search" placeholder="Tìm kiếm phần mềm..." value="${escapeHtml(swState.search)}">
@@ -82142,7 +82172,11 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     <option value="Staging" ${swState.envFilter === 'Staging' ? 'selected' : ''}>Staging</option>
     <option value="Development" ${swState.envFilter === 'Development' ? 'selected' : ''}>Development</option>
   </select>
+  <button id="sw-toggle-group" style="background:${swState.groupBySystem ? 'rgba(99,102,241,0.2)' : 'none'};border:1px solid ${swState.groupBySystem ? 'var(--accent)' : 'var(--border-color)'};color:${swState.groupBySystem ? 'var(--accent)' : 'var(--text-secondary)'};border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;" title="Nhóm theo hệ thống">
+    <i class="fa-solid fa-layer-group"></i> Nhóm hệ thống
+  </button>
   <span style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(String(swState.assets.length))} phần mềm</span>
+  ${lastScanText ? `<span style="font-size:0.75rem;color:var(--text-secondary);margin-left:auto;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${escapeHtml(lastScanText)}</span>` : ''}
 </div>`;
 
         if (swState.assets.length === 0) {
@@ -82153,23 +82187,23 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 </div>`;
         } else {
             let rows = '';
-            for (const a of swState.assets) {
-                const newCount = a.new_alerts || 0;
-                const topSev = a.top_severity || '';
-                const hasKev = a.has_kev;
-                rows += `<tr data-sw-asset-id="${escapeHtml(String(a.id))}" class="${newCount > 0 ? 'sw-alert-row' : ''}">
-  <td>${newCount > 0 ? '<span class="sw-new-dot"></span>' : ''}<span style="font-weight:600;">${escapeHtml(a.software_name || '')}</span>${hasKev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
-  <td>${escapeHtml(a.vendor || '—')}</td>
-  <td>${escapeHtml(a.version || '—')}</td>
-  <td>${escapeHtml(a.system_name || '—')}</td>
-  <td>${escapeHtml(a.environment || '—')}</td>
-  <td>${newCount > 0 ? `<span class="sw-sev-badge ${swSevClass(topSev)}" style="margin-right:4px;">${escapeHtml(String(newCount))} mới</span>` : '<span style="color:var(--text-secondary);font-size:0.8rem;">Không có</span>'}</td>
-  <td style="white-space:nowrap;">
-    <button class="sw-btn-scan" data-id="${escapeHtml(String(a.id))}" title="Quét CVE" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-magnifying-glass"></i></button>
-    <button class="sw-btn-edit" data-id="${escapeHtml(String(a.id))}" title="Sửa" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-pen"></i></button>
-    <button class="sw-btn-del" data-id="${escapeHtml(String(a.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-trash"></i></button>
-  </td>
-</tr>`;
+            if (swState.groupBySystem) {
+                const groups = {};
+                for (const a of swState.assets) {
+                    const g = a.system_name || '(Chưa phân loại)';
+                    if (!groups[g]) groups[g] = [];
+                    groups[g].push(a);
+                }
+                for (const [gName, gAssets] of Object.entries(groups)) {
+                    rows += `<tr class="sw-group-header"><td colspan="7"><i class="fa-solid fa-server" style="margin-right:6px;"></i>${escapeHtml(gName)} <span style="font-weight:400;font-size:0.78rem;opacity:0.7;">(${gAssets.length})</span></td></tr>`;
+                    for (const a of gAssets) {
+                        rows += swAssetRow(a);
+                    }
+                }
+            } else {
+                for (const a of swState.assets) {
+                    rows += swAssetRow(a);
+                }
             }
             el.innerHTML = toolbar + `
 <div style="overflow-x:auto;">
@@ -82191,6 +82225,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             swState.envFilter = e.target.value;
             swLoadAndRender();
         });
+        el.querySelector('#sw-toggle-group')?.addEventListener('click', () => {
+            swState.groupBySystem = !swState.groupBySystem;
+            swRenderTabContent();
+        });
         el.querySelectorAll('.sw-btn-scan').forEach(b => b.addEventListener('click', e => {
             e.stopPropagation();
             swScanAsset(parseInt(b.dataset.id));
@@ -82208,12 +82246,30 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
                 swState.selectedAsset = parseInt(tr.dataset.swAssetId);
                 swState.tab = 'alerts';
                 swRenderTabContent();
-                // Update tab buttons highlight
                 document.querySelectorAll('.sw-tab-btn').forEach(b => {
                     b.classList.toggle('active', b.dataset.swTab === 'alerts');
                 });
             });
         });
+    }
+
+    function swAssetRow(a) {
+        const newCount = a.new_alerts || 0;
+        const topSev = a.top_severity || '';
+        const hasKev = a.has_kev;
+        return `<tr data-sw-asset-id="${escapeHtml(String(a.id))}" class="${newCount > 0 ? 'sw-alert-row' : ''}">
+  <td>${newCount > 0 ? '<span class="sw-new-dot"></span>' : ''}<span style="font-weight:600;">${escapeHtml(a.software_name || '')}</span>${hasKev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
+  <td>${escapeHtml(a.vendor || '—')}</td>
+  <td>${escapeHtml(a.version || '—')}</td>
+  <td>${escapeHtml(a.system_name || '—')}</td>
+  <td>${escapeHtml(a.environment || '—')}</td>
+  <td>${newCount > 0 ? `<span class="sw-sev-badge ${swSevClass(topSev)}" style="margin-right:4px;">${escapeHtml(String(newCount))} mới</span>` : '<span style="color:var(--text-secondary);font-size:0.8rem;">Không có</span>'}</td>
+  <td style="white-space:nowrap;">
+    <button class="sw-btn-scan" data-id="${escapeHtml(String(a.id))}" title="Quét CVE" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-magnifying-glass"></i></button>
+    <button class="sw-btn-edit" data-id="${escapeHtml(String(a.id))}" title="Sửa" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-pen"></i></button>
+    <button class="sw-btn-del" data-id="${escapeHtml(String(a.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-trash"></i></button>
+  </td>
+</tr>`;
     }
 
     function swRenderAlerts(el) {
@@ -82228,8 +82284,18 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <select id="sw-alert-status">
     ${Object.entries(alertStatusLabels).map(([v, l]) => `<option value="${escapeHtml(v)}" ${swState.alertFilter === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
   </select>
+  <select id="sw-sev-filter">
+    <option value="" ${swState.severityFilter === '' ? 'selected' : ''}>Tất cả mức độ</option>
+    <option value="CRITICAL" ${swState.severityFilter === 'CRITICAL' ? 'selected' : ''}>CRITICAL</option>
+    <option value="HIGH" ${swState.severityFilter === 'HIGH' ? 'selected' : ''}>HIGH</option>
+    <option value="MEDIUM" ${swState.severityFilter === 'MEDIUM' ? 'selected' : ''}>MEDIUM</option>
+    <option value="LOW" ${swState.severityFilter === 'LOW' ? 'selected' : ''}>LOW</option>
+  </select>
   <span style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(String(swState.alerts.length))} cảnh báo</span>
-  ${swState.alerts.some(a => a.status === 'new') ? `<button id="sw-ack-all" style="background:rgba(99,102,241,0.12);border:1px solid var(--border-color);color:var(--text-primary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;margin-left:auto;"><i class="fa-solid fa-check-double"></i> Đánh dấu tất cả đã xem</button>` : ''}
+  <button id="sw-export-alerts" style="background:none;border:1px solid var(--border-color);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;margin-left:auto;" title="Xuất báo cáo CVE ra CSV">
+    <i class="fa-solid fa-file-csv"></i> Xuất báo cáo CVE
+  </button>
+  ${swState.alerts.some(a => a.status === 'new') ? `<button id="sw-ack-all" style="background:rgba(99,102,241,0.12);border:1px solid var(--border-color);color:var(--text-primary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;"><i class="fa-solid fa-check-double"></i> Đánh dấu tất cả đã xem</button>` : ''}
 </div>`;
 
         if (swState.alerts.length === 0) {
@@ -82276,9 +82342,86 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             swState.alertFilter = e.target.value;
             swLoadAndRender();
         });
+        el.querySelector('#sw-sev-filter')?.addEventListener('change', e => {
+            swState.severityFilter = e.target.value;
+            swLoadAndRender();
+        });
+        el.querySelector('#sw-export-alerts')?.addEventListener('click', () => swDoExportAlerts());
         el.querySelector('#sw-ack-all')?.addEventListener('click', () => swAckAll());
         el.querySelectorAll('.sw-btn-ack').forEach(b => b.addEventListener('click', () => swAckAlert(parseInt(b.dataset.id))));
         el.querySelectorAll('.sw-btn-del-al').forEach(b => b.addEventListener('click', () => swDeleteAlert(parseInt(b.dataset.id))));
+    }
+
+    function swRenderLibraries(el) {
+        const statusOptions = { '': 'Tất cả trạng thái', 'APPROVED': 'APPROVED', 'REVIEW': 'REVIEW', 'BLOCKED': 'BLOCKED' };
+
+        const toolbar = `
+<div class="sw-toolbar">
+  <input type="text" id="sw-lib-search" placeholder="Tìm kiếm thư viện..." value="${escapeHtml(swState.libSearch)}">
+  <select id="sw-lib-status">
+    ${Object.entries(statusOptions).map(([v, l]) => `<option value="${escapeHtml(v)}" ${swState.libStatusFilter === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+  </select>
+  <span style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(String(swState.libraries.length))} thư viện</span>
+  <button id="sw-lib-import" style="background:none;border:1px solid var(--border-color);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;margin-left:auto;">
+    <i class="fa-solid fa-file-import"></i> Nhập CSV
+  </button>
+  <button id="sw-lib-export" style="background:none;border:1px solid var(--border-color);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;">
+    <i class="fa-solid fa-file-export"></i> Xuất CSV
+  </button>
+  <button id="sw-lib-add" style="background:rgba(99,102,241,0.15);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem;">
+    <i class="fa-solid fa-plus"></i> Thêm mới
+  </button>
+</div>`;
+
+        if (swState.libraries.length === 0) {
+            el.innerHTML = toolbar + `
+<div class="sw-empty">
+  <i class="fa-solid fa-box-archive" style="font-size:2rem; opacity:0.3; margin-bottom:10px; display:block;"></i>
+  Chưa có thư viện nào. Nhập CSV hoặc thêm thủ công.
+</div>`;
+        } else {
+            let rows = '';
+            for (const lib of swState.libraries) {
+                const st = (lib.status || 'APPROVED').toUpperCase();
+                rows += `<tr>
+  <td><span style="font-weight:600;">${escapeHtml(lib.library_name || '')}</span></td>
+  <td>${escapeHtml(lib.system_name || '—')}</td>
+  <td>${escapeHtml(lib.stack || '—')}</td>
+  <td>${escapeHtml(lib.min_version || '—')}</td>
+  <td>${escapeHtml(lib.current_version || '—')}</td>
+  <td><span class="sw-lib-status sw-lib-status-${st.toLowerCase()}">${escapeHtml(st)}</span></td>
+  <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(lib.notes || '—')}</td>
+  <td style="white-space:nowrap;">
+    <button class="sw-lib-btn-edit" data-id="${escapeHtml(String(lib.id))}" title="Sửa" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-pen"></i></button>
+    <button class="sw-lib-btn-del" data-id="${escapeHtml(String(lib.id))}" title="Xóa" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:3px 6px;"><i class="fa-solid fa-trash"></i></button>
+  </td>
+</tr>`;
+            }
+            el.innerHTML = toolbar + `
+<div style="overflow-x:auto;">
+<table class="sw-asset-table">
+  <thead><tr>
+    <th>Thư viện / Package</th><th>Hệ thống</th><th>Stack</th><th>Version tối thiểu</th><th>Version hiện tại</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+</div>`;
+        }
+
+        // Events
+        el.querySelector('#sw-lib-search')?.addEventListener('input', e => {
+            swState.libSearch = e.target.value;
+            swFetchLibraries().then(() => swRenderTabContent()).catch(console.error);
+        });
+        el.querySelector('#sw-lib-status')?.addEventListener('change', e => {
+            swState.libStatusFilter = e.target.value;
+            swFetchLibraries().then(() => swRenderTabContent()).catch(console.error);
+        });
+        el.querySelector('#sw-lib-import')?.addEventListener('click', swShowLibImport);
+        el.querySelector('#sw-lib-export')?.addEventListener('click', swDoExportLibraries);
+        el.querySelector('#sw-lib-add')?.addEventListener('click', () => swShowLibModal());
+        el.querySelectorAll('.sw-lib-btn-edit').forEach(b => b.addEventListener('click', () => swShowLibModal(parseInt(b.dataset.id))));
+        el.querySelectorAll('.sw-lib-btn-del').forEach(b => b.addEventListener('click', () => swDeleteLibrary(parseInt(b.dataset.id))));
     }
 
     // ── Actions ───────────────────────────────────────────────────────────
@@ -82286,6 +82429,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     async function swLoadAndRender() {
         try {
             if (swState.tab === 'assets') await swFetchAssets();
+            else if (swState.tab === 'libraries') await swFetchLibraries();
             else await swFetchAlerts();
             await swFetchSummary();
         } catch (e) {
@@ -82300,6 +82444,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         try {
             const r = await fetch(`${SW_API}/scan`, { method: 'POST' });
             const d = await r.json();
+            try { localStorage.setItem('sw_last_scan', new Date().toISOString()); } catch (_) {}
             const msg = `Đã quét ${d.scanned || 0} phần mềm. Tìm thấy ${d.new_alerts || 0} cảnh báo mới.`;
             swShowToast(msg, d.new_alerts > 0 ? 'warning' : 'ok');
             await swLoadAndRender();
@@ -82375,6 +82520,162 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         } catch (e) {
             swShowToast('Lỗi xuất CSV: ' + e.message, 'error');
         }
+    }
+
+    async function swDoExportAlerts() {
+        try {
+            const params = new URLSearchParams();
+            if (swState.selectedAsset) params.set('asset_id', String(swState.selectedAsset));
+            if (swState.alertFilter) params.set('status', swState.alertFilter);
+            if (swState.severityFilter) params.set('severity', swState.severityFilter);
+            const r = await fetch(`${SW_API}/export-alerts?${params}`);
+            if (!r.ok) { swShowToast('Lỗi xuất báo cáo CVE.', 'error'); return; }
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'cve_alerts.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            swShowToast('Lỗi xuất báo cáo CVE: ' + e.message, 'error');
+        }
+    }
+
+    async function swDoExportLibraries() {
+        try {
+            const r = await fetch(`${SW_API}/libraries/export`);
+            if (!r.ok) { swShowToast('Lỗi xuất thư viện.', 'error'); return; }
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'libraries.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            swShowToast('Lỗi xuất CSV: ' + e.message, 'error');
+        }
+    }
+
+    async function swDeleteLibrary(libId) {
+        if (!confirm('Xóa thư viện này?')) return;
+        try {
+            await fetch(`${SW_API}/libraries/${libId}`, { method: 'DELETE' });
+            await swFetchLibraries();
+            swRenderTabContent();
+        } catch (e) {
+            swShowToast('Lỗi xóa: ' + e.message, 'error');
+        }
+    }
+
+    // ── Library Import Modal ──────────────────────────────────────────────────
+
+    function swShowLibImport() {
+        const overlay = document.createElement('div');
+        overlay.className = 'sw-modal-overlay';
+        overlay.innerHTML = `
+<div class="sw-modal">
+  <h3><i class="fa-solid fa-file-import" style="color:var(--accent);margin-right:8px;"></i>Nhập danh sách Thư viện (CSV)</h3>
+  <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:14px;">
+    File CSV cần có các cột: <strong>Thư viện / Package, Hệ thống, Stack, Version tối thiểu, Version hiện tại, Trạng thái</strong><br>
+    Trạng thái hợp lệ: APPROVED, REVIEW, BLOCKED
+  </p>
+  <div class="sw-form-row">
+    <label>Chọn file CSV</label>
+    <input type="file" id="sw-lib-import-file" accept=".csv,text/csv">
+  </div>
+  <div class="sw-btn-row">
+    <button id="sw-lib-import-cancel" class="btn-action" style="background:none;border-color:var(--border-color);">Hủy</button>
+    <button id="sw-lib-import-ok" class="btn-action" style="background:rgba(99,102,241,0.2);border-color:var(--accent);">Nhập</button>
+  </div>
+</div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#sw-lib-import-cancel').addEventListener('click', () => overlay.remove());
+        overlay.querySelector('#sw-lib-import-ok').addEventListener('click', async () => {
+            const fileEl = overlay.querySelector('#sw-lib-import-file');
+            if (!fileEl.files.length) { swShowToast('Chọn file trước.', 'error'); return; }
+            const form = new FormData();
+            form.append('file', fileEl.files[0]);
+            try {
+                const r = await fetch(`${SW_API}/libraries/import`, { method: 'POST', body: form });
+                const d = await r.json();
+                if (!d.ok) { swShowToast('Lỗi: ' + (d.reason || '?'), 'error'); return; }
+                swShowToast(`Đã nhập ${d.added} thư viện (bỏ qua ${d.skipped}).`, 'ok');
+                overlay.remove();
+                await swFetchLibraries();
+                swRenderTabContent();
+            } catch (e) {
+                swShowToast('Lỗi nhập CSV: ' + e.message, 'error');
+            }
+        });
+    }
+
+    // ── Library Add/Edit Modal ────────────────────────────────────────────────
+
+    async function swShowLibModal(editId) {
+        const lib = editId ? swState.libraries.find(l => l.id === editId) : null;
+        const overlay = document.createElement('div');
+        overlay.className = 'sw-modal-overlay';
+        const curStatus = lib?.status || 'APPROVED';
+        overlay.innerHTML = `
+<div class="sw-modal">
+  <h3><i class="fa-solid fa-${editId ? 'pen' : 'plus'}" style="color:var(--accent);margin-right:8px;"></i>${editId ? 'Cập nhật' : 'Thêm'} thư viện / package</h3>
+  <div class="sw-form-row"><label>Thư viện / Package *</label><input id="sw-lf-name" type="text" value="${escapeHtml(lib?.library_name || '')}" placeholder="VD: spring-boot"></div>
+  <div class="sw-form-row"><label>Hệ thống</label><input id="sw-lf-sys" type="text" value="${escapeHtml(lib?.system_name || '')}" placeholder="VD: Hệ thống Quản lý"></div>
+  <div class="sw-form-row"><label>Stack</label><input id="sw-lf-stack" type="text" value="${escapeHtml(lib?.stack || '')}" placeholder="VD: BE-Java, FE-React"></div>
+  <div class="sw-form-row"><label>Version tối thiểu</label><input id="sw-lf-minver" type="text" value="${escapeHtml(lib?.min_version || '')}" placeholder="VD: 3.1.0"></div>
+  <div class="sw-form-row"><label>Version hiện tại</label><input id="sw-lf-curver" type="text" value="${escapeHtml(lib?.current_version || '')}" placeholder="VD: 3.2.5"></div>
+  <div class="sw-form-row"><label>Trạng thái</label><select id="sw-lf-status">
+    <option value="APPROVED" ${curStatus === 'APPROVED' ? 'selected' : ''}>APPROVED</option>
+    <option value="REVIEW" ${curStatus === 'REVIEW' ? 'selected' : ''}>REVIEW</option>
+    <option value="BLOCKED" ${curStatus === 'BLOCKED' ? 'selected' : ''}>BLOCKED</option>
+  </select></div>
+  <div class="sw-form-row"><label>Ghi chú</label><input id="sw-lf-notes" type="text" value="${escapeHtml(lib?.notes || '')}"></div>
+  <div class="sw-btn-row">
+    <button id="sw-lib-cancel" class="btn-action" style="background:none;border-color:var(--border-color);">Hủy</button>
+    <button id="sw-lib-ok" class="btn-action" style="background:rgba(99,102,241,0.2);border-color:var(--accent);">${editId ? 'Lưu' : 'Thêm'}</button>
+  </div>
+</div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#sw-lib-cancel').addEventListener('click', () => overlay.remove());
+        overlay.querySelector('#sw-lib-ok').addEventListener('click', async () => {
+            const name = overlay.querySelector('#sw-lf-name').value.trim();
+            if (!name) { swShowToast('Tên thư viện không được để trống.', 'error'); return; }
+            const body = {
+                library_name: name,
+                system_name: overlay.querySelector('#sw-lf-sys').value.trim(),
+                stack: overlay.querySelector('#sw-lf-stack').value.trim(),
+                min_version: overlay.querySelector('#sw-lf-minver').value.trim(),
+                current_version: overlay.querySelector('#sw-lf-curver').value.trim(),
+                status: overlay.querySelector('#sw-lf-status').value,
+                notes: overlay.querySelector('#sw-lf-notes').value.trim(),
+            };
+            try {
+                let r;
+                if (editId) {
+                    r = await fetch(`${SW_API}/libraries/${editId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                } else {
+                    r = await fetch(`${SW_API}/libraries`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                }
+                const d = await r.json();
+                if (!d.ok && d.ok !== undefined) { swShowToast('Lỗi: ' + (d.reason || '?'), 'error'); return; }
+                swShowToast(editId ? 'Đã cập nhật thư viện.' : 'Đã thêm thư viện.', 'ok');
+                overlay.remove();
+                await swFetchLibraries();
+                swRenderTabContent();
+            } catch (e) {
+                swShowToast('Lỗi: ' + e.message, 'error');
+            }
+        });
     }
 
     // ── Import Modal ──────────────────────────────────────────────────────
@@ -82514,6 +82815,15 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             return;
         }
         swRender();
+
+        // Tự động scan nếu >24h kể từ lần quét cuối
+        try {
+            const lastScan = localStorage.getItem('sw_last_scan');
+            const hoursSince = lastScan ? (Date.now() - new Date(lastScan)) / 3600000 : 999;
+            if (hoursSince > 24 && swState.assets.length > 0) {
+                swScanAll();
+            }
+        } catch (_) {}
     }
 
     // Expose globally

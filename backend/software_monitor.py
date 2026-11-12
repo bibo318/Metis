@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS sw_alerts (
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_asset ON sw_alerts(asset_id);
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_status ON sw_alerts(status);
 CREATE INDEX IF NOT EXISTS idx_sw_alerts_cve ON sw_alerts(cve_id);
+CREATE TABLE IF NOT EXISTS sw_libraries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_name     TEXT NOT NULL DEFAULT '',
+    library_name    TEXT NOT NULL DEFAULT '',
+    stack           TEXT NOT NULL DEFAULT '',
+    min_version     TEXT DEFAULT '',
+    current_version TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'APPROVED',
+    notes           TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT '',
+    updated_at      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sw_libs_system ON sw_libraries(system_name);
+CREATE INDEX IF NOT EXISTS idx_sw_libs_status ON sw_libraries(status);
 """
 
 CSV_COLUMNS = [
@@ -269,7 +283,7 @@ def export_csv() -> str:
 # ── Alerts ────────────────────────────────────────────────────────────────────
 
 def get_alerts(asset_id: Optional[int] = None, status: str = "",
-               limit: int = 200) -> List[Dict]:
+               severity: str = "", limit: int = 200) -> List[Dict]:
     init_db()
     conn = _connect()
     try:
@@ -281,6 +295,9 @@ def get_alerts(asset_id: Optional[int] = None, status: str = "",
         if status:
             clauses.append("al.status=?")
             params.append(status)
+        if severity:
+            clauses.append("al.severity=?")
+            params.append(severity.upper())
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = conn.execute(
             f"SELECT al.*, a.software_name, a.vendor, a.system_name, a.environment "
@@ -496,6 +513,254 @@ def scan_all() -> Dict:
         "new_alerts": total_new,
         "errors": errors,
     }
+
+
+def export_alerts_csv(asset_id: Optional[int] = None, status: str = "",
+                      severity: str = "") -> str:
+    """Xuất cảnh báo CVE ra CSV."""
+    init_db()
+    conn = _connect()
+    try:
+        clauses = []
+        params: list = []
+        if asset_id is not None:
+            clauses.append("al.asset_id=?")
+            params.append(asset_id)
+        if status:
+            clauses.append("al.status=?")
+            params.append(status)
+        if severity:
+            clauses.append("al.severity=?")
+            params.append(severity.upper())
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = conn.execute(
+            f"SELECT al.*, a.software_name, a.vendor, a.system_name, a.environment "
+            f"FROM sw_alerts al JOIN sw_assets a ON a.id=al.asset_id "
+            f"{where} ORDER BY al.is_kev DESC, al.epss DESC, al.created_at DESC",
+            params
+        ).fetchall()
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow([
+            "Phần mềm", "Hệ thống", "Môi trường", "CVE", "Tiêu đề",
+            "Mức độ", "EPSS (%)", "Trong KEV", "Số PoC", "Ngày phát hiện", "Trạng thái"
+        ])
+        for r in rows:
+            epss_pct = f"{float(r['epss'] or 0) * 100:.1f}%" if r['epss'] else "0.0%"
+            writer.writerow([
+                r["software_name"], r["system_name"], r["environment"],
+                r["cve_id"], r["title"] or "", r["severity"] or "",
+                epss_pct, "Có" if r["is_kev"] else "Không",
+                r["poc_count"] or 0, r["published"] or "",
+                "Mới" if r["status"] == "new" else "Đã xem"
+            ])
+        return out.getvalue()
+    finally:
+        conn.close()
+
+
+# ── Libraries ─────────────────────────────────────────────────────────────────
+
+def get_libraries(search: str = "", system_name: str = "",
+                  status: str = "") -> List[Dict]:
+    init_db()
+    conn = _connect()
+    try:
+        clauses = []
+        params: list = []
+        if system_name:
+            clauses.append("system_name=?")
+            params.append(system_name)
+        if status:
+            clauses.append("status=?")
+            params.append(status.upper())
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = conn.execute(
+            f"SELECT * FROM sw_libraries {where} ORDER BY system_name, library_name",
+            params
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if search:
+                s = search.lower()
+                if not any(s in str(d.get(f) or "").lower()
+                           for f in ["library_name", "system_name", "stack", "notes"]):
+                    continue
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def add_library(system_name: str, library_name: str, stack: str = "",
+                min_version: str = "", current_version: str = "",
+                status: str = "APPROVED", notes: str = "") -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        now = _now()
+        cur = conn.execute(
+            "INSERT INTO sw_libraries (system_name, library_name, stack, min_version, "
+            "current_version, status, notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (system_name.strip(), library_name.strip(), stack.strip(),
+             min_version.strip(), current_version.strip(),
+             status.upper().strip() or "APPROVED", notes.strip(), now, now)
+        )
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid}
+    finally:
+        conn.close()
+
+
+def update_library(lib_id: int, **kwargs) -> Dict:
+    init_db()
+    conn = _connect()
+    allowed = {"system_name", "library_name", "stack", "min_version",
+               "current_version", "status", "notes"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if "status" in fields:
+        fields["status"] = str(fields["status"]).upper()
+    if not fields:
+        return {"ok": False, "reason": "Không có trường nào để cập nhật"}
+    fields["updated_at"] = _now()
+    sql = "UPDATE sw_libraries SET " + ", ".join(f"{k}=?" for k in fields) + " WHERE id=?"
+    try:
+        cur = conn.execute(sql, list(fields.values()) + [lib_id])
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
+    finally:
+        conn.close()
+
+
+def delete_library(lib_id: int) -> Dict:
+    init_db()
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM sw_libraries WHERE id=?", (lib_id,))
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
+    finally:
+        conn.close()
+
+
+def import_libraries_csv(csv_text: str) -> Dict:
+    """Import danh sách thư viện từ CSV."""
+    init_db()
+    reader = csv.DictReader(io.StringIO(csv_text.strip()))
+    headers = [h.strip() for h in (reader.fieldnames or [])]
+
+    col_map = {}
+    vi_map = {
+        "thư viện / package": "library_name",
+        "thư viện/package": "library_name",
+        "thư viện": "library_name",
+        "package": "library_name",
+        "hệ thống": "system_name",
+        "hệ thống thông tin thành phần": "system_name",
+        "stack": "stack",
+        "version được phép (tối thiểu)": "min_version",
+        "version tối thiểu": "min_version",
+        "phiên bản tối thiểu": "min_version",
+        "phiên bản hiện tại": "current_version",
+        "version hiện tại": "current_version",
+        "trạng thái": "status",
+        "ghi chú": "notes",
+    }
+    en_map = {
+        "library": "library_name",
+        "library name": "library_name",
+        "package name": "library_name",
+        "system name": "system_name",
+        "system": "system_name",
+        "stack": "stack",
+        "min version": "min_version",
+        "minimum version": "min_version",
+        "current version": "current_version",
+        "status": "status",
+        "notes": "notes",
+    }
+    for h in headers:
+        norm = h.lower().strip()
+        if norm in vi_map:
+            col_map[h] = vi_map[norm]
+        elif norm in en_map:
+            col_map[h] = en_map[norm]
+
+    if "library_name" not in col_map.values():
+        return {"ok": False, "reason": "Không tìm thấy cột 'Thư viện / Package' hoặc 'Library Name'"}
+
+    conn = _connect()
+    try:
+        added = skipped = 0
+        now = _now()
+        for row in reader:
+            mapped: Dict[str, str] = {}
+            for orig_col, field in col_map.items():
+                mapped[field] = str(row.get(orig_col) or "").strip()
+
+            lib = mapped.get("library_name", "").strip()
+            if not lib:
+                skipped += 1
+                continue
+
+            existing = conn.execute(
+                "SELECT id FROM sw_libraries WHERE library_name=? AND system_name=?",
+                (lib, mapped.get("system_name", ""))
+            ).fetchone()
+            if existing:
+                skipped += 1
+                continue
+
+            st = (mapped.get("status") or "APPROVED").upper()
+            if st not in ("APPROVED", "REVIEW", "BLOCKED"):
+                st = "APPROVED"
+
+            conn.execute(
+                "INSERT INTO sw_libraries (system_name, library_name, stack, min_version, "
+                "current_version, status, notes, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (mapped.get("system_name", ""), lib,
+                 mapped.get("stack", ""), mapped.get("min_version", ""),
+                 mapped.get("current_version", ""), st,
+                 mapped.get("notes", ""), now, now)
+            )
+            added += 1
+
+        conn.commit()
+        return {"ok": True, "added": added, "skipped": skipped}
+    except Exception as exc:
+        logger.error(f"Libraries CSV import error: {exc}")
+        return {"ok": False, "reason": str(exc)}
+    finally:
+        conn.close()
+
+
+def export_libraries_csv() -> str:
+    """Xuất danh sách thư viện ra CSV."""
+    init_db()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT system_name, library_name, stack, min_version, current_version, status, notes "
+            "FROM sw_libraries ORDER BY system_name, library_name"
+        ).fetchall()
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow([
+            "Hệ thống", "Thư viện / Package", "Stack",
+            "Version tối thiểu", "Phiên bản hiện tại", "Trạng thái", "Ghi chú"
+        ])
+        for r in rows:
+            writer.writerow([
+                r["system_name"], r["library_name"], r["stack"],
+                r["min_version"] or "", r["current_version"] or "",
+                r["status"], r["notes"] or ""
+            ])
+        return out.getvalue()
+    finally:
+        conn.close()
 
 
 def get_summary() -> Dict:

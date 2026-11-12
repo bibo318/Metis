@@ -10878,3 +10878,29 @@ i.spinner {
 .sw-btn-row {
     display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
 }
+
+/* ── Library status badges ────────────────────────────────────────────────── */
+.sw-lib-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.03em;
+}
+.sw-lib-status-approved { background: #16a34a; }
+.sw-lib-status-review   { background: #ca8a04; }
+.sw-lib-status-blocked  { background: #dc2626; }
+
+/* ── Group header rows ────────────────────────────────────────────────────── */
+.sw-group-header td {
+    background: var(--bg-tertiary, var(--bg-secondary));
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 7px 12px;
+    border-top: 1px solid var(--border-color);
+}

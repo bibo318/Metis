@@ -561,9 +561,12 @@ def sw_export_csv():
         raise HTTPException(500, str(exc))
 
 @app.get("/api/software-watch/alerts")
-def sw_get_alerts(asset_id: Optional[int] = None, status: str = "", limit: int = 200):
+def sw_get_alerts(asset_id: Optional[int] = None, status: str = "",
+                  severity: str = "", limit: int = 200):
     try:
-        return {"alerts": sw_mod.get_alerts(asset_id=asset_id, status=status, limit=limit)}
+        return {"alerts": sw_mod.get_alerts(
+            asset_id=asset_id, status=status, severity=severity, limit=limit
+        )}
     except Exception as exc:
         raise HTTPException(500, str(exc))
 
@@ -591,6 +594,100 @@ def sw_scan(asset_id: Optional[int] = None):
         return sw_mod.scan_all()
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+@app.get("/api/software-watch/export-alerts")
+def sw_export_alerts(asset_id: Optional[int] = None, status: str = "", severity: str = ""):
+    try:
+        csv_text = sw_mod.export_alerts_csv(asset_id=asset_id, status=status, severity=severity)
+        from fastapi.responses import Response
+        return Response(
+            content=csv_text.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=cve_alerts.csv"}
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+class _SwLibReq(BaseModel):
+    system_name: str = ""
+    library_name: str = ""
+    stack: str = ""
+    min_version: str = ""
+    current_version: str = ""
+    status: str = "APPROVED"
+    notes: str = ""
+
+
+class _SwLibUpdateReq(BaseModel):
+    system_name: Optional[str] = None
+    library_name: Optional[str] = None
+    stack: Optional[str] = None
+    min_version: Optional[str] = None
+    current_version: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.get("/api/software-watch/libraries")
+def sw_get_libraries(search: str = "", system_name: str = "", status: str = ""):
+    try:
+        return {"libraries": sw_mod.get_libraries(search=search, system_name=system_name, status=status)}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/api/software-watch/libraries")
+def sw_add_library(req: _SwLibReq):
+    try:
+        return sw_mod.add_library(
+            req.system_name, req.library_name, req.stack,
+            req.min_version, req.current_version, req.status, req.notes
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.put("/api/software-watch/libraries/{lib_id}")
+def sw_update_library(lib_id: int, req: _SwLibUpdateReq):
+    try:
+        kwargs = {k: v for k, v in req.dict().items() if v is not None}
+        return sw_mod.update_library(lib_id, **kwargs)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.delete("/api/software-watch/libraries/{lib_id}")
+def sw_delete_library(lib_id: int):
+    try:
+        return sw_mod.delete_library(lib_id)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/api/software-watch/libraries/import")
+async def sw_import_libraries_csv(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig", errors="replace")
+        return sw_mod.import_libraries_csv(text)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/software-watch/libraries/export")
+def sw_export_libraries():
+    try:
+        csv_text = sw_mod.export_libraries_csv()
+        from fastapi.responses import Response
+        return Response(
+            content=csv_text.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=libraries.csv"}
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
 
 @app.get("/api/software-watch/summary")
 def sw_summary():
