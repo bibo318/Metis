@@ -63,6 +63,13 @@ AI_PROVIDER_PRESETS = {
         "api_key_required": True,
         "adapter": "openai_compatible",
     },
+    "9router": {
+        "label": "9Router (Local Proxy)",
+        "endpoint": "http://localhost:20128/v1/chat/completions",
+        "model": "gpt-4o-mini",
+        "api_key_required": False,
+        "adapter": "openai_compatible",
+    },
     "openrouter": {
         "label": "OpenRouter",
         "endpoint": "https://openrouter.ai/api/v1/chat/completions",
