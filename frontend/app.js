@@ -82027,6 +82027,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     'use strict';
 
     const SW_API = `${API_BASE}/api/software-watch`;
+    function swDebounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
     let swState = {
         tab: 'assets',          // 'assets' | 'alerts' | 'libraries'
         assets: [],
@@ -82377,7 +82378,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 <div style="overflow-x:auto;">
 <table class="sw-asset-table">
   <thead><tr>
-    <th>Phần mềm</th><th>Hãng</th><th>Phiên bản</th><th>Hệ thống</th><th>Môi trường</th><th>Cảnh báo</th><th>Hành động</th>
+    <th>Phần mềm</th><th>Hãng</th><th>Phiên bản</th><th>Hệ thống</th><th>Môi trường</th><th>Rủi ro</th><th>Cảnh báo</th><th>Hành động</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
@@ -82386,10 +82387,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         }
 
         // Events
-        el.querySelector('#sw-search')?.addEventListener('input', e => {
+        el.querySelector('#sw-search')?.addEventListener('input', swDebounce(e => {
             swState.search = e.target.value;
             swLoadAndRender();
-        });
+        }, 300));
         el.querySelector('#sw-env-filter')?.addEventListener('change', e => {
             swState.envFilter = e.target.value;
             swLoadAndRender();
@@ -82432,7 +82433,13 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
   <td>${escapeHtml(a.version || '—')}${a.latest_version && a.latest_version !== a.version ? `<span class="sw-upgrade-hint" title="Khuyến nghị nâng cấp lên phiên bản đã vá CVE">↑ ${escapeHtml(a.latest_version)}</span>` : ''}</td>
   <td>${escapeHtml(a.system_name || '—')}</td>
   <td>${escapeHtml(a.environment || '—')}</td>
-  <td>${newCount > 0 ? `<span class="sw-sev-badge ${swSevClass(topSev)}" style="margin-right:4px;">${escapeHtml(String(newCount))} mới</span>` : '<span style="color:var(--text-secondary);font-size:0.8rem;">Không có</span>'}</td>
+  <td>${(() => {
+    const score = Math.min(100, Math.round(a.risk_score || 0));
+    if (!score) return '<span style="color:var(--text-muted);font-size:0.78rem;">—</span>';
+    const color = score >= 70 ? '#dc2626' : score >= 40 ? '#ea580c' : score >= 15 ? '#d97706' : '#2563eb';
+    return `<div class="sw-risk-bar" title="Risk Score: ${score}/100"><div class="sw-risk-fill" style="width:${score}%;background:${color};"></div></div><span style="font-size:0.72rem;color:var(--text-muted);">${score}</span>`;
+  })()}</td>
+  <td>${newCount > 0 ? `<span class="sw-sev-badge ${swSevClass(topSev)}" style="margin-right:4px;">${escapeHtml(String(newCount))} mới</span>` : '<span style="color:var(--text-muted);font-size:0.8rem;">Không có</span>'}</td>
   <td style="white-space:nowrap;">
     <button class="sw-btn-scan" data-id="${escapeHtml(String(a.id))}" title="Quét CVE" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:3px 8px;font-size:0.85rem;"><i class="fa-solid fa-magnifying-glass"></i></button>
     <button class="sw-btn-edit" data-id="${escapeHtml(String(a.id))}" title="Sửa" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:3px 8px;font-size:0.85rem;"><i class="fa-solid fa-pen"></i></button>
@@ -82603,14 +82610,22 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
                         return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" class="sw-src-badge ${cls}" title="${escapeHtml(s.name)}">${short}</a>`;
                     }).join('');
                 })();
+                const kevDueHtml = (() => {
+                    if (!al.kev_due_date) return '—';
+                    const daysLeft = Math.round((new Date(al.kev_due_date) - new Date()) / 86400000);
+                    const cls = daysLeft < 0 ? 'sw-kev-due-urgent' : daysLeft <= 7 ? 'sw-kev-due-urgent' : daysLeft <= 30 ? 'sw-kev-due-soon' : '';
+                    const label = daysLeft < 0 ? `Quá hạn ${Math.abs(daysLeft)}n` : daysLeft === 0 ? 'Hôm nay!' : `${daysLeft}n`;
+                    return `<span class="${cls}" title="Deadline: ${escapeHtml(al.kev_due_date)}">${label}</span>`;
+                })();
                 rows += `<tr>
-  <td>${al.status === 'new' ? '<span class="sw-new-dot"></span>' : ''}<strong>${escapeHtml(al.cve_id || '—')}</strong></td>
+  <td>${al.status === 'new' ? '<span class="sw-new-dot"></span>' : ''}<button class="sw-btn-cve-detail" data-id="${escapeHtml(String(al.id))}" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:0;font-weight:700;font-size:inherit;">${escapeHtml(al.cve_id || '—')}</button></td>
   <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(al.title || '—')}${al.is_kev ? '<span class="sw-kev-tag">KEV</span>' : ''}</td>
   <td><span class="sw-sev-badge ${swSevClass(al.severity)}">${escapeHtml(swSevLabel(al.severity))}</span></td>
   <td>${al.epss ? escapeHtml((parseFloat(al.epss)*100).toFixed(1)) + '%' : '—'}</td>
   <td>${escapeHtml(al.software_name || '—')}${al.asset_version ? `<br><span style="color:var(--text-muted);font-size:0.72rem;" title="Phiên bản hiện tại">v${escapeHtml(al.asset_version)}</span>` : ''}</td>
   <td>${escapeHtml(al.environment || '—')}</td>
   <td>${al.fixed_version ? `<span class="sw-fix-badge" title="Phiên bản đã vá">→ ${escapeHtml(al.fixed_version)}</span>` : '—'}</td>
+  <td>${kevDueHtml}</td>
   <td style="line-height:1.6;">${srcBadges}</td>
   <td>${escapeHtml(swFmt(al.published))}</td>
   <td style="white-space:nowrap;">
@@ -82623,7 +82638,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
 <div style="overflow-x:auto;">
 <table class="sw-asset-table">
   <thead><tr>
-    ${swSortTh('cve_id','CVE')}${swSortTh('title','Tiêu đề')}${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}${swSortTh('software_name','Phần mềm')}${swSortTh('environment','Môi trường')}<th title="Phiên bản đã vá">Fix v.</th><th>Nguồn</th>${swSortTh('published','Ngày')}<th>Hành động</th>
+    ${swSortTh('cve_id','CVE')}${swSortTh('title','Tiêu đề')}${swSortTh('severity','Mức độ')}${swSortTh('epss','EPSS')}${swSortTh('software_name','Phần mềm')}${swSortTh('environment','Môi trường')}<th title="Phiên bản đã vá">Fix v.</th><th title="Deadline KEV">KEV Due</th><th>Nguồn</th>${swSortTh('published','Ngày')}<th>Hành động</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
@@ -82666,6 +82681,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         }));
         el.querySelectorAll('.sw-btn-ack').forEach(b => b.addEventListener('click', () => swAckAlert(parseInt(b.dataset.id))));
         el.querySelectorAll('.sw-btn-del-al').forEach(b => b.addEventListener('click', () => swDeleteAlert(parseInt(b.dataset.id))));
+        el.querySelectorAll('.sw-btn-cve-detail').forEach(b => b.addEventListener('click', () => swShowCveModal(parseInt(b.dataset.id))));
     }
 
     function swRenderLibraries(el) {
@@ -82726,10 +82742,10 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
         }
 
         // Events
-        el.querySelector('#sw-lib-search')?.addEventListener('input', e => {
+        el.querySelector('#sw-lib-search')?.addEventListener('input', swDebounce(e => {
             swState.libSearch = e.target.value;
             swFetchLibraries().then(() => swRenderTabContent()).catch(console.error);
-        });
+        }, 300));
         el.querySelector('#sw-lib-status')?.addEventListener('change', e => {
             swState.libStatusFilter = e.target.value;
             swFetchLibraries().then(() => swRenderTabContent()).catch(console.error);
@@ -82809,8 +82825,7 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
     async function swAckAll() {
         // Optimistic update: cập nhật UI ngay
         swState.alerts.forEach(a => { if (a.status === 'new') a.status = 'acknowledged'; });
-        const el = document.getElementById('sw-content');
-        if (el) swRenderAlerts(el);
+        swRenderTabContent();
         // Gọi API background
         try {
             await fetch(`${SW_API}/alerts/ack`, {
@@ -82818,12 +82833,6 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ asset_id: swState.selectedAsset || null }),
             });
-            // Refresh summary counts, không reload alerts
-            if (typeof swFetchSummary === 'function') {
-                await swFetchSummary();
-                const sel = document.getElementById('sw-content');
-                if (sel) swRenderSummary(sel);
-            }
         } catch (e) {
             console.error(e);
             await swLoadAndRender();
@@ -82835,6 +82844,52 @@ const bwSafeUrl = (u) => /^https?:\/\//i.test(String(u || '').trim()) ? String(u
             await fetch(`${SW_API}/alerts/${alertId}`, { method: 'DELETE' });
             await swLoadAndRender();
         } catch (e) { console.error(e); }
+    }
+
+    function swShowCveModal(alertId) {
+        const al = swState.alerts.find(a => a.id === alertId);
+        if (!al) return;
+        let sources = [];
+        try { sources = JSON.parse(al.sources_json || '[]'); } catch(e) {}
+        const daysLeft = al.kev_due_date ? Math.round((new Date(al.kev_due_date) - new Date()) / 86400000) : null;
+        const kevDueStr = daysLeft !== null ? (daysLeft < 0 ? `Quá hạn ${Math.abs(daysLeft)} ngày (${al.kev_due_date})` : `${daysLeft} ngày còn lại (${al.kev_due_date})`) : '';
+        const srcList = sources.map(s => {
+            const safeUrl = (s.url && /^https?:\/\//.test(s.url)) ? s.url : '#';
+            return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" style="display:block;color:var(--accent);font-size:0.83rem;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(s.url||'')}"><i class="fa-solid fa-link" style="margin-right:5px;opacity:0.6;"></i>${escapeHtml(s.name)} — ${escapeHtml((s.url||'').replace(/^https?:\/\//,'').substring(0,60))}${(s.url||'').length>66?'…':''}</a>`;
+        }).join('');
+        const html = `
+<div id="sw-cve-modal-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;">
+  <div class="sw-modal" style="max-width:600px;width:100%;max-height:85vh;overflow-y:auto;position:relative;">
+    <button onclick="document.getElementById('sw-cve-modal-overlay').remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1.1rem;"><i class="fa-solid fa-xmark"></i></button>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:1.1rem;font-weight:700;color:var(--accent);margin-bottom:4px;">${escapeHtml(al.cve_id||'')}</div>
+      <div style="font-size:0.88rem;color:var(--text-main);margin-bottom:8px;">${escapeHtml(al.title||'')}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+        <span class="sw-sev-badge ${swSevClass(al.severity)}">${escapeHtml(swSevLabel(al.severity))}</span>
+        ${al.is_kev ? '<span class="sw-kev-tag">KEV</span>' : ''}
+        ${al.epss ? `<span style="font-size:0.8rem;color:var(--text-muted);">EPSS: ${(parseFloat(al.epss)*100).toFixed(1)}%</span>` : ''}
+        ${al.poc_count ? `<span style="font-size:0.8rem;color:var(--text-muted);">PoC: ${escapeHtml(String(al.poc_count))}</span>` : ''}
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;font-size:0.82rem;">
+      <div><span style="color:var(--text-muted);">Phần mềm:</span> ${escapeHtml(al.software_name||'—')}</div>
+      <div><span style="color:var(--text-muted);">Môi trường:</span> ${escapeHtml(al.environment||'—')}</div>
+      <div><span style="color:var(--text-muted);">Phiên bản:</span> ${al.asset_version ? `v${escapeHtml(al.asset_version)}` : '—'}</div>
+      <div><span style="color:var(--text-muted);">Fix tại v.:</span> ${al.fixed_version ? `<span class="sw-fix-badge">→ ${escapeHtml(al.fixed_version)}</span>` : '—'}</div>
+      <div><span style="color:var(--text-muted);">Ngày phát hiện:</span> ${escapeHtml(swFmt(al.published))}</div>
+      ${al.kev_due_date ? `<div><span style="color:var(--text-muted);">KEV Deadline:</span> <span class="${daysLeft!==null&&daysLeft<=7?'sw-kev-due-urgent':'sw-kev-due-soon'}">${escapeHtml(kevDueStr)}</span></div>` : ''}
+    </div>
+    ${srcList ? `<div style="margin-bottom:14px;"><div style="font-size:0.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Nguồn tình báo</div>${srcList}</div>` : ''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <a href="https://nvd.nist.gov/vuln/detail/${encodeURIComponent(al.cve_id||'')}" target="_blank" rel="noopener" class="sw-btn" style="text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Mở NVD</a>
+      ${al.status==='new' ? `<button class="sw-btn sw-btn-primary" onclick="swAckAlert(${escapeHtml(String(al.id))});document.getElementById('sw-cve-modal-overlay').remove()"><i class="fa-solid fa-check"></i> Đã xem</button>` : ''}
+    </div>
+  </div>
+</div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+        document.getElementById('sw-cve-modal-overlay').addEventListener('click', e => {
+            if (e.target.id === 'sw-cve-modal-overlay') e.target.remove();
+        });
     }
 
     async function swDoExport() {

@@ -119,6 +119,7 @@ def init_db():
             "ALTER TABLE sw_alerts ADD COLUMN affected_versions TEXT DEFAULT ''",
             "ALTER TABLE sw_alerts ADD COLUMN fixed_version TEXT DEFAULT ''",
             "ALTER TABLE sw_alerts ADD COLUMN sources_json TEXT DEFAULT '[]'",
+            "ALTER TABLE sw_alerts ADD COLUMN kev_due_date TEXT DEFAULT ''",
         ]:
             try:
                 conn.execute(col_def)
@@ -206,8 +207,11 @@ def get_assets(search: str = "", environment: str = "") -> List[Dict]:
             "SELECT a.*, "
             "(SELECT COUNT(*) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as new_alerts,"
             "(SELECT COUNT(*) FROM sw_alerts al WHERE al.asset_id=a.id) as total_alerts,"
-            "(SELECT MAX(al.severity) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as top_severity,"
-            "(SELECT MAX(al.is_kev) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as has_kev "
+            "(SELECT al.severity FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new' ORDER BY CASE al.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 4 ELSE 5 END LIMIT 1) as top_severity,"
+            "(SELECT MAX(al.is_kev) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as has_kev,"
+            "(SELECT CAST(MIN(al.kev_due_date) AS TEXT) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new' AND al.is_kev=1 AND al.kev_due_date!='') as nearest_kev_due,"
+            "(SELECT CAST(ROUND(MIN(CAST((julianday(al.kev_due_date) - julianday('now')) AS REAL))) AS INTEGER) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new' AND al.is_kev=1 AND al.kev_due_date!='') as kev_days_left,"
+            "(SELECT CAST(ROUND(SUM(CASE al.severity WHEN 'CRITICAL' THEN al.epss*3 WHEN 'HIGH' THEN al.epss*2 WHEN 'MEDIUM' THEN al.epss ELSE al.epss*0.3 END * CASE WHEN al.is_kev=1 THEN 1.5 ELSE 1.0 END)*10) AS INTEGER) FROM sw_alerts al WHERE al.asset_id=a.id AND al.status='new') as risk_score "
             "FROM sw_assets a ORDER BY a.system_name, a.software_name"
         ).fetchall()
         result = []
@@ -735,7 +739,10 @@ def scan_asset(asset_id: int) -> Dict:
 
             epss_meta = (pocindex_mod.state.get("epss") or {}).get(cve) or []
             epss = float(epss_meta[0]) if epss_meta else 0.0
-            is_kev = 1 if cve in (pocindex_mod.state.get("kev") or {}) else 0
+            kev_data = pocindex_mod.state.get("kev") or {}
+            kev_entry = kev_data.get(cve, {})
+            is_kev = 1 if kev_entry else 0
+            kev_due_date = kev_entry.get("due_date", "") if isinstance(kev_entry, dict) else ""
             severity = str(e.get("severity") or "")
             title = str(e.get("title") or e.get("kev_vulnerability_name") or cve)
             poc_count = len(e.get("_allLinks") or [])
@@ -761,10 +768,10 @@ def scan_asset(asset_id: int) -> Dict:
                 conn.execute(
                     "INSERT OR IGNORE INTO sw_alerts "
                     "(asset_id, cve_id, title, severity, epss, is_kev, poc_count, published, source, "
-                    "affected_versions, fixed_version, sources_json, status, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)",
+                    "affected_versions, fixed_version, sources_json, kev_due_date, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)",
                     (asset_id, cve, title, severity, epss, is_kev, poc_count, published, "pocindex/kev",
-                     affected_versions, fixed_version, sources_json, now)
+                     affected_versions, fixed_version, sources_json, kev_due_date, now)
                 )
                 new_row = conn.execute("SELECT changes()").fetchone()[0] > 0
                 if new_row:
@@ -778,15 +785,16 @@ def scan_asset(asset_id: int) -> Dict:
                 else:
                     # Upsert: refresh fixed_version và sources khi có data tốt hơn
                     has_better_sources = len(sources) > 1
-                    if fixed_version or has_better_sources:
+                    if fixed_version or has_better_sources or kev_due_date:
                         conn.execute(
-                            """UPDATE sw_alerts SET fixed_version=?, sources_json=?, affected_versions=?
+                            """UPDATE sw_alerts SET fixed_version=?, sources_json=?, affected_versions=?, kev_due_date=?
                                WHERE asset_id=? AND cve_id=? AND (
                                    (fixed_version='' AND ?) OR
-                                   (sources_json='[]' OR sources_json LIKE '[{"name": "NVD"%') AND ?
+                                   (sources_json='[]' OR sources_json LIKE '[{"name": "NVD"%') AND ? OR
+                                   (kev_due_date='' AND ?)
                                )""",
-                            (fixed_version, sources_json, affected_versions,
-                             asset_id, cve, bool(fixed_version), has_better_sources)
+                            (fixed_version, sources_json, affected_versions, kev_due_date,
+                             asset_id, cve, bool(fixed_version), has_better_sources, bool(kev_due_date))
                         )
             except sqlite3.IntegrityError:
                 pass

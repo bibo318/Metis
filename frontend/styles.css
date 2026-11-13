@@ -10896,6 +10896,10 @@ i.spinner {
 .sw-src-cisa   { background: #15803d; color: #fff; }
 .sw-upgrade-hint { color: var(--accent); font-size: 0.72rem; display: block; margin-top: 2px; }
 .sw-fix-badge { color: #4ade80; font-size: 0.78rem; }
+.sw-kev-due-urgent { color: #ef4444; font-weight: 700; font-size: 0.78rem; }
+.sw-kev-due-soon { color: #f97316; font-weight: 600; font-size: 0.78rem; }
+.sw-risk-bar { width: 56px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; display: inline-block; vertical-align: middle; margin-right: 4px; overflow: hidden; }
+.sw-risk-fill { height: 100%; border-radius: 3px; }
 
 /* Modal */
 .sw-modal-overlay {

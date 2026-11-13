@@ -1033,6 +1033,7 @@ def stop_bot(bot_id: str, paused: bool = False) -> dict:
 
 def prune_old_messages(days: int = 90) -> int:
     """Hard-delete messages older than N days to prevent database bloating."""
+    init_db()
     conn = connect()
     try:
         cutoff_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - (days * 86400)))

@@ -333,7 +333,6 @@ def _settings_raw() -> Dict[str, Any]:
                     settings[key] = row["value"]
     finally:
         conn.close()
-    settings["enabled"] = True
     return settings
 
 
